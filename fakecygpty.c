@@ -33,6 +33,7 @@
  * COMPILATION
  * -------
  * gcc -o fakecygpty.exe fakecygpty.c
+ * Note: You must compile it in Cygwin environment. NOT in MinGW32!
  *
  */
 
@@ -58,7 +59,7 @@ BOOL CALLBACK
 enum_windows_proc (HWND hWnd, LPARAM pid) {
   DWORD procid;
   GetWindowThreadProcessId (hWnd, &procid);
-  
+
   if (pid == procid)
     ShowWindow (hWnd, SW_HIDE);
 }
@@ -78,17 +79,17 @@ exec_target(char* argv[])
   int fd;
   int pid;
 
-  masterfd = open ("/dev/ptmx", O_RDWR);
+  masterfd = open("/dev/ptmx", O_RDWR);
   if (masterfd < 0)
     {
       perror("Cannot open pseudo tty");
       exit (1);
     }
 
-  pid = fork ();
+  pid = fork();
   if (pid < 0)
     {
-      perror ("Failed to fork");
+      perror("Failed to fork");
       return;
     }
 
@@ -99,9 +100,9 @@ exec_target(char* argv[])
       setsid();
 
       /* this open raises console window on Windows 7 RC,
-	 hide_console_window () hides it. */
-      slave = open (ptsname (masterfd), O_RDWR);
-      hide_console_window ();
+	 hide_console_window() hides it. */
+      slave = open(ptsname (masterfd), O_RDWR);
+      hide_console_window();
 
       if (slave < 0)
 	{
@@ -113,22 +114,22 @@ exec_target(char* argv[])
       {
 	if (slave != fd)
 	  {
-	    if (dup2 (slave, fd) < 0)
+	    if (dup2(slave, fd) < 0)
 	      {
-		perror ("Failed to dup2");
-		exit (1);
+		perror("Failed to dup2");
+		exit(1);
 	      }
 	  }
-	fcntl (fd, F_SETFD, 0);
+	fcntl(fd, F_SETFD, 0);
       }
 
-    if (slave > 2) close (slave);
+    if (slave > 2) close(slave);
 
-    execvp (argv[0], argv);
+    execvp(argv[0], argv);
 
-    fprintf (stderr, "Failed to execute \"%s\".", argv[0]);
-    perror ("execvp");
-    exit (1);
+    fprintf(stderr, "Failed to execute \"%s\".", argv[0]);
+    perror("execvp");
+    exit(1);
   }
 
   child_pid = pid;
@@ -144,43 +145,43 @@ setup_tty_attributes (void)
 {
   struct termios tm;
 
-  if (tcgetattr (masterfd, &tm) == 0)
+  if (tcgetattr(masterfd, &tm) == 0)
     {
       /* Inhibit echo when executed under emacs/windows environment */
-      if (! isatty (0))
+      if (!isatty(0))
 	{
 	  tm.c_iflag |= IGNCR;
 	  tm.c_lflag &= ~ECHO;
 	}
-      tcsetattr (masterfd, TCSANOW, &tm);
+      tcsetattr(masterfd, TCSANOW, &tm);
     }
 
-  if (tcgetattr (0, &oldtm) == 0)
+  if (tcgetattr(0, &oldtm) == 0)
     {
       tm = oldtm;
       tm.c_iflag &= ~(ICRNL | IXON | IXOFF);
       tm.c_iflag |= IGNBRK;
       tm.c_lflag &= ~(ICANON | ECHO | ISIG | ECHOE);
-      tcsetattr (0, TCSANOW, &tm);
+      tcsetattr(0, TCSANOW, &tm);
     }
 }
 
 void
 restore_tty_attributes (void)
 {
-  tcsetattr (0, TCSANOW, &oldtm);
+  tcsetattr(0, TCSANOW, &oldtm);
 }
 
 char *
-real_command_name (char* my_name)
+real_command_name(char* my_name)
 {
   char *p;
 
   /* Assume mutlbyte characters do not occur here */
-  p = strrchr (my_name, '/');
+  p = strrchr(my_name, '/');
   if (p == NULL)
     {
-      p = strrchr (my_name, '\\');
+      p = strrchr(my_name, '\\');
 
       if (p == NULL)
 	p = my_name;
@@ -190,18 +191,18 @@ real_command_name (char* my_name)
   else
     p++;
 
-  if (strcmp (p, MY_NAME) == 0)
+  if (strcmp(p, MY_NAME) == 0)
     {
       return NULL;    /* I am invoked as explicit wrapper program */
     }
 
-  if (strncmp (p, COMMAND_PREFIX, strlen (COMMAND_PREFIX)) != 0)
+  if (strncmp(p, COMMAND_PREFIX, strlen (COMMAND_PREFIX)) != 0)
     {
-      fprintf (stderr, "Illegal program name format. \'%s\'\n", my_name);
-      exit (1);
+      fprintf(stderr, "Illegal program name format. \'%s\'\n", my_name);
+      exit(1);
     }
 
-  return p + strlen (COMMAND_PREFIX);
+  return p + strlen(COMMAND_PREFIX);
 }
 
 /* Signal handler for convert SIGINT into ^C on pty */
@@ -212,18 +213,18 @@ ctrl_handler(DWORD e)
   switch (e)
     {
     case CTRL_C_EVENT:
-      write (masterfd, "\003", 1);
+      write(masterfd, "\003", 1);
       return TRUE;
 
     case CTRL_CLOSE_EVENT:
-      kill (child_pid, SIGKILL);
+      kill(child_pid, SIGKILL);
       return FALSE;
     }
   return FALSE;
 }
 
 int
-main (int argc, char* argv[])
+main(int argc, char* argv[])
 {
   struct termios oldtm;
   fd_set sel, sel0;
@@ -232,28 +233,28 @@ main (int argc, char* argv[])
 
   /* SIGINT and SIGBREAK are indistinctive under cygwin environment. */
   /* Using Win32API to handle SIGINT.                              */
-  SetConsoleCtrlHandler (ctrl_handler, TRUE);
+  SetConsoleCtrlHandler(ctrl_handler, TRUE);
 
   if (argc < 1)
     {
-      fprintf (stderr, "Unable to get arg[0].");
-      exit (1);
+      fprintf(stderr, "Unable to get arg[0].");
+      exit(1);
     }
 
-  newarg0 = real_command_name (argv[0]);
+  newarg0 = real_command_name(argv[0]);
   if (newarg0)
     {
       argv[0] = newarg0;
-      exec_target (argv);     /* This sets globals masterfd, child_pid */
+      exec_target(argv);     /* This sets globals masterfd, child_pid */
     }
   else
-    exec_target (argv + 1); /* This sets globals masterfd, child_pid */
+    exec_target(argv + 1); /* This sets globals masterfd, child_pid */
 
-  setup_tty_attributes ();
+  setup_tty_attributes();
 
-  FD_ZERO (&sel0);
-  FD_SET (masterfd, &sel0);
-  FD_SET (0, &sel0);
+  FD_ZERO(&sel0);
+  FD_SET(masterfd, &sel0);
+  FD_SET(0, &sel0);
 
   /* communication loop */
   while (1)
@@ -265,31 +266,31 @@ main (int argc, char* argv[])
       if (select (FD_SETSIZE, &sel, NULL, NULL, NULL) <= 0)
 	break;
 
-      if (FD_ISSET (masterfd, &sel))
+      if (FD_ISSET(masterfd, &sel))
 	{
-	  ret = read (masterfd, buf, BUFSIZE);
+	  ret = read(masterfd, buf, BUFSIZE);
 	  if (ret > 0)
-	      write (1, buf, ret);
+	      write(1, buf, ret);
 	  else
 	    break;
 	}
-      else if (FD_ISSET (0, &sel))
+      else if (FD_ISSET(0, &sel))
 	{
-	  ret = read (0, buf, BUFSIZE);
+	  ret = read(0, buf, BUFSIZE);
 	  if (ret > 0)
-	      write (masterfd, buf, ret);
+	      write(masterfd, buf, ret);
 	  else
 	    {
-	      FD_CLR (0, &sel0);
-	      close (masterfd);
+	      FD_CLR(0, &sel0);
+	      close(masterfd);
 	    }
 	}
     }
 
-  restore_tty_attributes ();
+  restore_tty_attributes();
 
-  kill (child_pid, SIGKILL);
-  waitpid (child_pid, &status, 0);
+  kill(child_pid, SIGKILL);
+  waitpid(child_pid, &status, 0);
   return status;
 }
 
