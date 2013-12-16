@@ -43,6 +43,9 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <termios.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #define BUFSIZE		 1024	/* size of communication buffer */
 #define COMMAND_PREFIX	 "f_"
@@ -60,8 +63,12 @@ enum_windows_proc (HWND hWnd, LPARAM pid) {
   DWORD procid;
   GetWindowThreadProcessId (hWnd, &procid);
 
-  if (pid == procid)
+  if (pid == procid) {
     ShowWindow (hWnd, SW_HIDE);
+    return FALSE;
+  }
+  
+  return TRUE;
 }
 
 void
@@ -226,7 +233,6 @@ ctrl_handler(DWORD e)
 int
 main(int argc, char* argv[])
 {
-  struct termios oldtm;
   fd_set sel, sel0;
   int status;
   char* newarg0;
@@ -293,4 +299,3 @@ main(int argc, char* argv[])
   waitpid(child_pid, &status, 0);
   return WEXITSTATUS(status);
 }
-
