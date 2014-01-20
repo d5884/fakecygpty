@@ -56,28 +56,6 @@ int child_pid;		/* pid of child proces  */
 int masterfd;		/* fd of pty served to child process */
 
 
-/* Console window of child process is made visible on Windows 7 RC, 
-   Forcefully make it as workaround... */
-BOOL CALLBACK
-enum_windows_proc (HWND hWnd, LPARAM pid) {
-  DWORD procid;
-  GetWindowThreadProcessId (hWnd, &procid);
-
-  if (pid == procid) {
-    ShowWindow (hWnd, SW_HIDE);
-    return FALSE;
-  }
-  
-  return TRUE;
-}
-
-void
-hide_console_window (void)
-{
-  EnumWindows (enum_windows_proc, GetCurrentProcessId ());
-}
-
-
 /* Create pty and fork/exec target process */
 /* This function sets child_pid and masterfd */
 void
@@ -106,10 +84,7 @@ exec_target(char* argv[])
 
       setsid();
 
-      /* this open raises console window on Windows 7 RC,
-	 hide_console_window() hides it. */
       slave = open(ptsname (masterfd), O_RDWR);
-      hide_console_window();
 
       if (slave < 0)
 	{
