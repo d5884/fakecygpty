@@ -205,6 +205,28 @@ ctrl_handler(DWORD e)
   return FALSE;
 }
 
+ssize_t safe_read(int fd, void *buf, size_t count)
+{
+  ssize_t ret;
+
+  do {
+    ret = read(fd, buf, count);
+  } while(ret < 0 && errno == EINTR);
+
+  return ret;
+}
+
+ssize_t safe_write(int fd, void *buf, size_t count)
+{
+  ssize_t ret;
+
+  do {
+    ret = write(fd, buf, count);
+  } while(ret < 0 && errno == EINTR);
+
+  return ret;
+}
+
 int
 main(int argc, char* argv[])
 {
@@ -249,17 +271,17 @@ main(int argc, char* argv[])
 
       if (FD_ISSET(masterfd, &sel))
 	{
-	  ret = read(masterfd, buf, BUFSIZE);
+	  ret = safe_read(masterfd, buf, BUFSIZE);
 	  if (ret > 0)
-	      write(1, buf, ret);
+	    safe_write(1, buf, ret);
 	  else
 	    break;
 	}
       else if (FD_ISSET(0, &sel))
 	{
-	  ret = read(0, buf, BUFSIZE);
+	  ret = safe_read(0, buf, BUFSIZE);
 	  if (ret > 0)
-	      write(masterfd, buf, ret);
+	    safe_write(masterfd, buf, ret);
 	  else
 	    {
 	      FD_CLR(0, &sel0);
