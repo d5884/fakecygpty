@@ -125,9 +125,16 @@ setup_tty_attributes (void)
 
   if (tcgetattr(masterfd, &tm) == 0)
     {
-      /* Inhibit echo when executed under emacs/windows environment */
+      /* setup values from child_setup_tty() in emacs/src/sysdep.c */
+      tm.c_iflag &= ~(IUCLC | ISTRIP);
       tm.c_iflag |= IGNCR;
+      tm.c_oflag &= ~(ONLCR | OLCUC | TAB3);
+      tm.c_oflag |= OPOST;
       tm.c_lflag &= ~ECHO;
+      tm.c_lflag |= ISIG | ICANON;
+      tm.c_cc[VERASE] = _POSIX_VDISABLE;
+      tm.c_cc[VKILL] = _POSIX_VDISABLE;
+      tm.c_cc[VEOF] = 'D'&037;
       tcsetattr(masterfd, TCSANOW, &tm);
     }
 }
