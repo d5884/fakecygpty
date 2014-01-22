@@ -110,8 +110,7 @@ exec_target(char* argv[])
 
     execvp(argv[0], argv);
 
-    fprintf(stderr, "Failed to execute \"%s\".", argv[0]);
-    perror("execvp");
+    fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
     exit(1);
   }
 
@@ -120,9 +119,6 @@ exec_target(char* argv[])
   return;
 }
 
-
-struct termios oldtm;
-
 void
 setup_tty_attributes (void)
 {
@@ -130,29 +126,18 @@ setup_tty_attributes (void)
 
   if (tcgetattr(masterfd, &tm) == 0)
     {
-      /* Inhibit echo when executed under emacs/windows environment */
-      if (!isatty(0))
-	{
-	  tm.c_iflag |= IGNCR;
-	  tm.c_lflag &= ~ECHO;
-	}
+      /* setup values from child_setup_tty() in emacs/src/sysdep.c */
+      tm.c_iflag &= ~(IUCLC | ISTRIP);
+      tm.c_iflag |= IGNCR;
+      tm.c_oflag &= ~(ONLCR | OLCUC | TAB3);
+      tm.c_oflag |= OPOST;
+      tm.c_lflag &= ~ECHO;
+      tm.c_lflag |= ISIG | ICANON;
+      tm.c_cc[VERASE] = _POSIX_VDISABLE;
+      tm.c_cc[VKILL] = _POSIX_VDISABLE;
+      tm.c_cc[VEOF] = 'D'&037;
       tcsetattr(masterfd, TCSANOW, &tm);
     }
-
-  if (tcgetattr(0, &oldtm) == 0)
-    {
-      tm = oldtm;
-      tm.c_iflag &= ~(ICRNL | IXON | IXOFF);
-      tm.c_iflag |= IGNBRK;
-      tm.c_lflag &= ~(ICANON | ECHO | ISIG | ECHOE);
-      tcsetattr(0, TCSANOW, &tm);
-    }
-}
-
-void
-restore_tty_attributes (void)
-{
-  tcsetattr(0, TCSANOW, &oldtm);
 }
 
 char *
@@ -181,7 +166,7 @@ real_command_name(char* my_name)
 
   if (strncmp(p, COMMAND_PREFIX, strlen (COMMAND_PREFIX)) != 0)
     {
-      fprintf(stderr, "Illegal program name format. \'%s\'\n", my_name);
+      fprintf(stderr, "Illegal program name format. \"%s\"\n", my_name);
       exit(1);
     }
 
@@ -260,18 +245,30 @@ main(int argc, char* argv[])
 
   if (argc < 1)
     {
-      fprintf(stderr, "Unable to get arg[0].");
+      fputs("Unable to get arg[0].", stderr);
       exit(1);
     }
 
   newarg0 = real_command_name(argv[0]);
+
   if (newarg0)
-    {
-      argv[0] = newarg0;
-      exec_target(argv);     /* This sets globals masterfd, child_pid */
-    }
+    argv[0] = newarg0;
+  else if (argc >=2)
+    argv++;
   else
-    exec_target(argv + 1); /* This sets globals masterfd, child_pid */
+    {
+      fputs("usage: fakecygpty <command> [args...]", stderr);
+      exit(1);
+    }
+
+  if (isatty(0))
+    {
+      execvp(argv[0], argv);
+      fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
+      exit(1);
+    }
+  
+  exec_target(argv); /* This sets globals masterfd, child_pid */
 
   setup_tty_attributes();
   setup_signal_handlers();
@@ -317,8 +314,6 @@ main(int argc, char* argv[])
 	    }
 	}
     }
-
-  restore_tty_attributes();
 
   kill(child_pid, SIGKILL);
   waitpid(child_pid, &status, 0);
