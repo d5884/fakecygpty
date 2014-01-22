@@ -218,18 +218,23 @@ main(int argc, char* argv[])
 
   if (argc < 1)
     {
-      fprintf(stderr, "Unable to get arg[0].");
+      fputs("Unable to get arg[0].", stderr);
       exit(1);
     }
 
   newarg0 = real_command_name(argv[0]);
+
   if (newarg0)
-    {
-      argv[0] = newarg0;
-      exec_target(argv);     /* This sets globals masterfd, child_pid */
-    }
+    argv[0] = newarg0;
+  else if (argc >=2)
+    argv++;
   else
-    exec_target(argv + 1); /* This sets globals masterfd, child_pid */
+    {
+      fputs("usage: fakecygpty <command> [args...]", stderr);
+      exit(1);
+    }
+  
+  exec_target(argv); /* This sets globals masterfd, child_pid */
 
   setup_tty_attributes();
 
