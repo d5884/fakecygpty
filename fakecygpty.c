@@ -109,8 +109,7 @@ exec_target(char* argv[])
 
     execvp(argv[0], argv);
 
-    fprintf(stderr, "Failed to execute \"%s\".", argv[0]);
-    perror("execvp");
+    fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
     exit(1);
   }
 
@@ -159,7 +158,7 @@ real_command_name(char* my_name)
 
   if (strncmp(p, COMMAND_PREFIX, strlen (COMMAND_PREFIX)) != 0)
     {
-      fprintf(stderr, "Illegal program name format. \'%s\'\n", my_name);
+      fprintf(stderr, "Illegal program name format. \"%s\"\n", my_name);
       exit(1);
     }
 
@@ -216,8 +215,7 @@ main(int argc, char* argv[])
   if (isatty(0))
     {
       execvp(argv[0], argv);
-      fprintf(stderr, "Failed to execute \"%s\".", argv[0]);
-      perror("execvp");
+      fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
       exit(1);
     }
   
