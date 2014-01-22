@@ -233,6 +233,14 @@ main(int argc, char* argv[])
       fputs("usage: fakecygpty <command> [args...]", stderr);
       exit(1);
     }
+
+  if (isatty(0))
+    {
+      execvp(argv[0], argv);
+      fprintf(stderr, "Failed to execute \"%s\".", argv[0]);
+      perror("execvp");
+      exit(1);
+    }
   
   exec_target(argv); /* This sets globals masterfd, child_pid */
 
