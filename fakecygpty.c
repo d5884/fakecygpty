@@ -119,9 +119,6 @@ exec_target(char* argv[])
   return;
 }
 
-
-struct termios oldtm;
-
 void
 setup_tty_attributes (void)
 {
@@ -130,28 +127,10 @@ setup_tty_attributes (void)
   if (tcgetattr(masterfd, &tm) == 0)
     {
       /* Inhibit echo when executed under emacs/windows environment */
-      if (!isatty(0))
-	{
-	  tm.c_iflag |= IGNCR;
-	  tm.c_lflag &= ~ECHO;
-	}
+      tm.c_iflag |= IGNCR;
+      tm.c_lflag &= ~ECHO;
       tcsetattr(masterfd, TCSANOW, &tm);
     }
-
-  if (tcgetattr(0, &oldtm) == 0)
-    {
-      tm = oldtm;
-      tm.c_iflag &= ~(ICRNL | IXON | IXOFF);
-      tm.c_iflag |= IGNBRK;
-      tm.c_lflag &= ~(ICANON | ECHO | ISIG | ECHOE);
-      tcsetattr(0, TCSANOW, &tm);
-    }
-}
-
-void
-restore_tty_attributes (void)
-{
-  tcsetattr(0, TCSANOW, &oldtm);
 }
 
 char *
@@ -280,8 +259,6 @@ main(int argc, char* argv[])
 	    }
 	}
     }
-
-  restore_tty_attributes();
 
   kill(child_pid, SIGKILL);
   waitpid(child_pid, &status, 0);
