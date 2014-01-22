@@ -55,6 +55,7 @@
 int child_pid;		/* pid of child proces  */
 int masterfd;		/* fd of pty served to child process */
 
+volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
 
 /* Create pty and fork/exec target process */
 /* This function sets child_pid and masterfd */
@@ -227,6 +228,25 @@ ssize_t safe_write(int fd, void *buf, size_t count)
   return ret;
 }
 
+void sigwinch_handler(int signum, siginfo_t *info, void *unused)
+{
+  sig_winch_caught = TRUE;
+}
+
+void setup_signal_handlers()
+{
+  struct sigaction newsig;
+  
+  newsig.sa_sigaction = sigwinch_handler;
+  newsig.sa_flags = SA_SIGINFO;
+  sigemptyset(&newsig.sa_mask);
+  /* sigaddset(&newsig.sa_mask, SIGWINCH); */
+  if (sigaction(SIGWINCH, &newsig, NULL) < 0){
+    perror ("Failed to sigaction");
+    exit(-1);
+  }
+}
+
 int
 main(int argc, char* argv[])
 {
@@ -254,6 +274,7 @@ main(int argc, char* argv[])
     exec_target(argv + 1); /* This sets globals masterfd, child_pid */
 
   setup_tty_attributes();
+  setup_signal_handlers();
 
   FD_ZERO(&sel0);
   FD_SET(masterfd, &sel0);
@@ -265,8 +286,15 @@ main(int argc, char* argv[])
       char buf[BUFSIZE];
       int ret;
 
+      if (sig_winch_caught == TRUE)
+	{
+	  sig_winch_caught = FALSE;
+	  kill(child_pid, SIGWINCH);
+	}
+
       sel = sel0;
-      if (select (FD_SETSIZE, &sel, NULL, NULL, NULL) <= 0)
+      if (select (FD_SETSIZE, &sel, NULL, NULL, NULL) <= 0
+	  && !(errno == EINTR && sig_winch_caught == TRUE))
 	break;
 
       if (FD_ISSET(masterfd, &sel))
