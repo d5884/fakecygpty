@@ -28,8 +28,6 @@ int main(int argc, char *argv[])
       if (sigqueue_for_winpid(win_pid, signum, info) == FALSE)
 	return 1;
     }
-  } else if (argc == 1) {
-    start_interactive_mode();
   } else {
     usage();
   }
@@ -51,25 +49,6 @@ int string_to_integer(const char *str, int *ret)
     return 0;
   else
     return 1;
-}
-
-void start_interactive_mode()
-{
-  char buf[512];
-  int win_pid;
-  int signum;
-  int info;
-  
-  puts("== Signal helper interactive mode ==");
-  puts("format: <windows pid>,<signal number>,<signal value>");
-
-  while(fgets(buf, sizeof(buf), stdin) != NULL) {
-    if (sscanf(buf, "%d,%d,%d\n", &win_pid, &signum, &info) != 3){
-      fprintf(stderr, "Format error \"%s\".\n", buf);
-    } else {
-      sigqueue_for_winpid(win_pid, signum, info);
-    }
-  }
 }
 
 bool_t sigqueue_for_winpid(int win_pid, int signum, int info)
