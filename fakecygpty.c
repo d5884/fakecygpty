@@ -46,6 +46,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/ioctl.h>
 
 #define BUFSIZE		 1024	/* size of communication buffer */
 #define COMMAND_PREFIX	 "f_"
@@ -56,6 +57,7 @@ int child_pid;		/* pid of child proces  */
 int masterfd;		/* fd of pty served to child process */
 
 volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
+volatile sig_atomic_t sig_window_size = -1;     /* window size info */
 
 /* Create pty and fork/exec target process */
 /* This function sets child_pid and masterfd */
@@ -216,6 +218,10 @@ ssize_t safe_write(int fd, void *buf, size_t count)
 void sigwinch_handler(int signum, siginfo_t *info, void *unused)
 {
   sig_winch_caught = TRUE;
+  if (info->si_code == SI_QUEUE) 
+    sig_window_size = info->si_value.sival_int;
+  else
+    sig_window_size = -1;
 }
 
 void setup_signal_handlers()
@@ -230,6 +236,20 @@ void setup_signal_handlers()
     perror ("Failed to sigaction");
     exit(-1);
   }
+}
+
+void resize_window(int window_size_info)
+{
+  struct winsize w;
+
+  if (window_size_info >= 0) 
+    {
+      /* size info: high-16bit => rows, low-16bit => cols */
+      w.ws_row = window_size_info >> 16;
+      w.ws_col = window_size_info & 0xFFFF;
+      if (ioctl(masterfd, TIOCSWINSZ, &w) == 0)
+	kill(child_pid, SIGWINCH);
+    }
 }
 
 int
@@ -286,14 +306,18 @@ main(int argc, char* argv[])
       if (sig_winch_caught == TRUE)
 	{
 	  sig_winch_caught = FALSE;
-	  kill(child_pid, SIGWINCH);
+	  resize_window(sig_window_size);
 	}
 
       sel = sel0;
-      if (select (FD_SETSIZE, &sel, NULL, NULL, NULL) <= 0
-	  && !(errno == EINTR && sig_winch_caught == TRUE))
-	break;
-
+      if (select (FD_SETSIZE, &sel, NULL, NULL, NULL) <= 0) 
+	{
+	  if(errno == EINTR && sig_winch_caught == TRUE)
+	    continue;
+	  else
+	    break;
+	}
+      
       if (FD_ISSET(masterfd, &sel))
 	{
 	  ret = safe_read(masterfd, buf, BUFSIZE);
