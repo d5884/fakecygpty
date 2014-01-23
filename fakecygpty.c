@@ -215,6 +215,11 @@ ssize_t safe_write(int fd, void *buf, size_t count)
 
   do {
     ret = write(fd, buf, count);
+    if (ret > 0) 
+      {
+	buf += ret;
+	count -= ret;
+      }
   } while(ret < 0 && errno == EINTR);
 
   return ret;
@@ -383,6 +388,8 @@ main(int argc, char* argv[])
     }
 
   kill(child_pid, SIGKILL);
-  waitpid(child_pid, &status, 0);
+  while(waitpid(child_pid, &status, 0) < 0 && errno == EINTR)
+    ;
+  
   return WEXITSTATUS(status);
 }
