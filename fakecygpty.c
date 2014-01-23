@@ -395,7 +395,6 @@ main(int argc, char* argv[])
 	}
     }
 
-  kill(child_pid, SIGKILL);
   while(waitpid(child_pid, &status, 0) < 0 && errno == EINTR)
     ;
   
