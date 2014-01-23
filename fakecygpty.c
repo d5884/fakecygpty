@@ -59,10 +59,28 @@ int masterfd;		/* fd of pty served to child process */
 volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
 volatile sig_atomic_t sig_window_size = -1;     /* window size info */
 
-/* singals passed through into child process. */
-int pass_through_signals[] = {
-  SIGHUP, SIGINT, SIGALRM, SIGTERM, SIGUSR1, SIGUSR2
+void signal_pass_handler(int signum, siginfo_t *info, void *unused);
+void sigwinch_handler(int signum, siginfo_t *info, void *unused);
+
+/* signal trapping descriptor */
+struct sigtrap_desc {
+  int signum;
+  void  (*action)(int, siginfo_t *, void *);
 };
+
+/* signals requiring to trap */
+struct sigtrap_desc sigtrap_descs[] =
+  {
+    { SIGHUP,   signal_pass_handler },
+    { SIGINT,   signal_pass_handler },
+    { SIGALRM,  signal_pass_handler },
+    { SIGTERM,  signal_pass_handler },
+    { SIGWINCH, sigwinch_handler    },
+    { SIGUSR1,  signal_pass_handler },
+    { SIGUSR2,  signal_pass_handler }
+  };
+
+#define SIGTRAP_COUNT (sizeof(sigtrap_descs)/sizeof(struct sigtrap_desc))
 
 /* Create pty and fork/exec target process */
 /* This function sets child_pid and masterfd */
@@ -258,25 +276,15 @@ void setup_signal_handlers()
   struct sigaction newsig;
   int i;
   
-  newsig.sa_sigaction = sigwinch_handler;
   newsig.sa_flags = SA_SIGINFO;
   sigemptyset(&newsig.sa_mask);
-  /* sigaddset(&newsig.sa_mask, SIGWINCH); */
-  if (sigaction(SIGWINCH, &newsig, NULL) < 0)
-    {
-      fprintf(stderr, "Failed to sigaction on %d: %s\n", 
-	      SIGWINCH, strerror(errno));
-    }
 
-  newsig.sa_sigaction = signal_pass_handler;
-  sigemptyset(&newsig.sa_mask);
-  for (i = 0; i < sizeof(pass_through_signals) / sizeof(int); i++)
+  for (i = 0; i < SIGTRAP_COUNT; i++)
     {
-      if(sigaction(pass_through_signals[i], &newsig, NULL) < 0)
-	{
-	  fprintf(stderr, "Failed to sigaction on %d: %s\n", 
-		  pass_through_signals[i], strerror(errno));
-	}
+      newsig.sa_sigaction = sigtrap_descs[i].action;
+      if (sigaction(sigtrap_descs[i].signum, &newsig, NULL) < 0)
+	fprintf(stderr, "Failed to sigaction on %d: %s\n", 
+		sigtrap_descs[i].signum, strerror(errno));
     }
 }
 
@@ -391,5 +399,10 @@ main(int argc, char* argv[])
   while(waitpid(child_pid, &status, 0) < 0 && errno == EINTR)
     ;
   
-  return WEXITSTATUS(status);
+  if (WIFEXITED(status))
+    return WEXITSTATUS(status);
+  else if(WIFSIGNALED(status)) /* ntemacs cannot distinct killed by signal */
+    return 0x80 +  WTERMSIG(status); 
+  
+  return 0;
 }
