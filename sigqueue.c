@@ -37,7 +37,7 @@ int main(int argc, char *argv[])
 
 void usage()
 {
-  fputs("usage: sighelpr [windows pid] [signal number] [signal value]\n", stderr);
+  fputs("usage: sigqueue <windows pid> <signal number> <signal value>\n", stderr);
 }
 
 int string_to_integer(const char *str, int *ret)
