@@ -73,6 +73,7 @@ struct sigtrap_desc sigtrap_descs[] =
   {
     { SIGHUP,   signal_pass_handler },
     { SIGINT,   signal_pass_handler },
+    { SIGQUIT,  signal_pass_handler },
     { SIGALRM,  signal_pass_handler },
     { SIGTERM,  signal_pass_handler },
     { SIGWINCH, sigwinch_handler    },
