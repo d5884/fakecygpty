@@ -59,6 +59,11 @@ int masterfd;		/* fd of pty served to child process */
 volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
 volatile sig_atomic_t sig_window_size = -1;     /* window size info */
 
+/* singals passed through into child process. */
+int pass_through_signals[] = {
+  SIGHUP, SIGINT, SIGALRM, SIGTERM, SIGUSR1, SIGUSR2
+};
+
 /* Create pty and fork/exec target process */
 /* This function sets child_pid and masterfd */
 void
@@ -224,30 +229,68 @@ void sigwinch_handler(int signum, siginfo_t *info, void *unused)
     sig_window_size = -1;
 }
 
+void signal_pass_handler(int signum, siginfo_t *info, void *unused)
+{
+  union sigval sigval;
+  int saved_errno;
+  
+  saved_errno = errno;
+  if (info->si_code == SI_QUEUE) 
+    {
+      sigval = info->si_value;
+      sigqueue(child_pid, signum, sigval);
+      
+    }
+  else
+    {
+      kill(child_pid, signum);
+    }
+  errno = saved_errno;
+}
+
 void setup_signal_handlers()
 {
   struct sigaction newsig;
+  int i;
   
   newsig.sa_sigaction = sigwinch_handler;
   newsig.sa_flags = SA_SIGINFO;
   sigemptyset(&newsig.sa_mask);
   /* sigaddset(&newsig.sa_mask, SIGWINCH); */
-  if (sigaction(SIGWINCH, &newsig, NULL) < 0){
-    perror ("Failed to sigaction");
-    exit(-1);
-  }
+  if (sigaction(SIGWINCH, &newsig, NULL) < 0)
+    {
+      fprintf(stderr, "Failed to sigaction on %d: %s\n", 
+	      SIGWINCH, strerror(errno));
+    }
+
+  newsig.sa_sigaction = signal_pass_handler;
+  sigemptyset(&newsig.sa_mask);
+  for (i = 0; i < sizeof(pass_through_signals) / sizeof(int); i++)
+    {
+      if(sigaction(pass_through_signals[i], &newsig, NULL) < 0)
+	{
+	  fprintf(stderr, "Failed to sigaction on %d: %s\n", 
+		  pass_through_signals[i], strerror(errno));
+	}
+    }
 }
 
 void resize_window(int window_size_info)
 {
   struct winsize w;
+  int ret;
 
   if (window_size_info >= 0) 
     {
       /* size info: high-16bit => rows, low-16bit => cols */
       w.ws_row = window_size_info >> 16;
       w.ws_col = window_size_info & 0xFFFF;
-      if (ioctl(masterfd, TIOCSWINSZ, &w) == 0)
+
+      do {
+	ret = ioctl(masterfd, TIOCSWINSZ, &w);
+      } while (ret < 0 && errno == EINTR);
+
+      if (ret == 0)
 	kill(child_pid, SIGWINCH);
     }
 }
@@ -312,7 +355,7 @@ main(int argc, char* argv[])
       sel = sel0;
       if (select (FD_SETSIZE, &sel, NULL, NULL, NULL) <= 0) 
 	{
-	  if(errno == EINTR && sig_winch_caught == TRUE)
+	  if(errno == EINTR)
 	    continue;
 	  else
 	    break;
