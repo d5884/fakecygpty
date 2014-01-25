@@ -27,6 +27,9 @@
  *    09 Jun, 2005 : Version 1.0.0 - first release.
  *    15 Jun, 2005 : Version 1.0.1 - bug fix and change coding style.
  *    15 May, 2009 : Version 1.0.2 - Work around for Windows 7 RC
+ *    25 Jan, 2014 : Version 1.1.0 - fix tty attribute like emacs tty.
+ *                                   accept SIGWINCH signal for resize.
+ *                                   transport some signals to child pid.
  */
 
 /*
@@ -35,6 +38,22 @@
  * gcc -o fakecygpty.exe fakecygpty.c
  * Note: You must compile it in Cygwin environment. NOT in MinGW32!
  *
+ */
+
+/*
+ * HOW TO RESIZE TTY WINDOW SIZE?
+ * -------
+ * Send SIGWINCH signal by sigqueue() with sigval stored window size.
+ * window size format: high-16bit => rows, low-16bit => cols
+ *
+ * ex) set window size cols=140 rows=32 by C code.
+ *
+ *   union sigval sigval;
+ *   pid_t pid = <fakecygpty's pid>;
+ *   int cols = 140, rows = 32;
+ *
+ *   sigval.sival_int = rows << 16 + 0xFFFF & cols;
+ *   sigqueue(pid, SIGWINCH, sigval);
  */
 
 #include <windows.h>
