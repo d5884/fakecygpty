@@ -1,56 +1,111 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <signal.h>
 #include <unistd.h>
+#include <errno.h>
 #include <sys/cygwin.h>
+
+#define PROGNAME "qkill"
 
 typedef enum { TRUE = 1, FALSE = 0 } bool_t;
 
-void start_interactive_mode();
-bool_t sigqueue_for_winpid(int win_pid, int signum, int info);
-void usage();
-
 bool_t string_to_integer(const char *str, int *ret);
 bool_t string_to_signum(const char *str, int *ret);
+bool_t signame_to_signum(const char*signame, int *ret);
 
-int str2sig(const char*signame, int *ret);
+void usage();
 
 int main(int argc, char *argv[])
 {
-  if (argc == 4) {
-    int win_pid;
-    int signum;
-    int info;
-
-    if (!string_to_integer(argv[1], &win_pid) ||
-	!string_to_signum(argv[2], &signum) ||
-	!string_to_integer(argv[3], &info)){
-      fputs("Invalid arguments.\n", stderr);
-      usage();
-      return 1;
-    } else {
-      if (sigqueue_for_winpid(win_pid, signum, info) == FALSE)
-	return 1;
-    }
-  } else {
-    usage();
-  }
+  bool_t flag_winpid = FALSE;
+  bool_t flag_signal_specified = FALSE;
+  bool_t flag_pid_found = FALSE;
+  bool_t flag_verbose = FALSE;
+  int signum = 0;
+  int sigval_int = 0;
+  int opt;
+  int i;
   
-  return 0;
+  opterr = 0; /* suppress auto error */
+  while(!flag_pid_found && (opt = getopt(argc, argv, "+vws:i:h")) != -1) {
+    switch(opt) {
+    case 'w':
+      flag_winpid = TRUE;
+      break;
+      
+    case 's':
+      if (!string_to_signum(optarg,  &signum)) {
+	fprintf(stderr, "%s: Unknown signal: %s\n", PROGNAME, optarg);
+	exit(EXIT_FAILURE);
+      }
+      flag_signal_specified = TRUE;
+      break;
+
+    case 'i':
+      if (!string_to_integer(optarg, &sigval_int)) {
+	fprintf(stderr, "%s: Invalid sigval: %s\n", PROGNAME, optarg);
+	exit(EXIT_FAILURE);
+      }
+      break;
+
+    case 'v':
+      flag_verbose = TRUE;
+      break;
+
+    case 'h':
+      usage();
+      exit(EXIT_SUCCESS);
+
+    case '?':
+      if (isdigit(optopt)) {
+	flag_pid_found = TRUE;
+      } else {
+	fprintf(stderr, "%s: Invalid option: -%c\n", PROGNAME, optopt);
+	exit(EXIT_FAILURE);
+      }
+    }
+  }
+
+  if (!flag_signal_specified)
+    signum = SIGTERM;
+
+  if (optind >= argc) {
+    usage();
+    exit(EXIT_FAILURE);
+  }
+
+  for (i = optind; i < argc; i++) {
+    pid_t pid;
+    union sigval sigval;
+
+    if (!string_to_integer(argv[i], &pid)) {
+      fprintf(stderr, "%s: Invalid pid - %s\n", PROGNAME, argv[i]);
+    }
+    if (flag_winpid && (pid = cygwin_winpid_to_pid(pid)) < 0) {
+      fprintf(stderr, "%s: Not a cygwin process - %s\n", PROGNAME, argv[i]);
+      exit(EXIT_FAILURE);
+    }
+    
+    if (flag_verbose) {
+      fprintf(stderr, "invoke:sigqueue(%d,%d,%d)\n", pid, signum, sigval_int);
+    }
+
+    sigval.sival_int = sigval_int;
+    if (sigqueue(pid, signum, sigval) != 0) {
+      fprintf(stderr, "%s: %s\n", PROGNAME, strerror(errno));
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  exit(EXIT_SUCCESS);
 }
 
 void usage()
 {
-  fputs("usage: sigqueue <windows pid> <signal number or name> <signal value>\n", stderr);
-}
-
-bool_t string_to_signum(const char *str, int *ret)
-{
-  if (str2sig(str, ret) == 0)
-    return TRUE;
-  
-  return string_to_integer(str, ret);
+  fprintf(stderr, "usage: %s [-w] [-s signal]] [-i sigval] pid [pids...]\n",
+	  PROGNAME);
 }
 
 bool_t string_to_integer(const char *str, int *ret)
@@ -64,53 +119,40 @@ bool_t string_to_integer(const char *str, int *ret)
     return TRUE;
 }
 
-bool_t sigqueue_for_winpid(int win_pid, int signum, int info)
+bool_t string_to_signum(const char *str, int *ret)
 {
-  union sigval sigval;
-  pid_t cyg_pid = cygwin_winpid_to_pid(win_pid);
-
-  if (cyg_pid < 0)
-    {
-      fputs("Not a cygwin process.\n", stderr);
-      return FALSE;
-    }
-    
-  printf("sigqueue([winpid:%d=>cygpid:%d],%d,%08x)\n", win_pid, cyg_pid, signum, info);
-
-  sigval.sival_int = info;
-  if (sigqueue(cyg_pid, signum, sigval) != 0){
-    perror("Faild to sigqueue");
-
-    return FALSE;
-  }
-
-  return TRUE;
+  if (signame_to_signum(str, ret))
+    return TRUE;
+  
+  return string_to_integer(str, ret);
 }
 
-int str2sig(const char*signame, int *ret)
+bool_t signame_to_signum(const char*signame, int *ret)
 {
   char *upname;
   int signum;
   int search_base = 0;
   
   if ((upname = strdup(signame)) == NULL)
-    return 1;
+    return FALSE;
   strupr(upname);
 
-  if (strstr(upname, "SIG") != upname)
+  if (strstr(upname, "IG") == upname) /* for -s[igsome] to some*/
+    search_base = 1;
+  else if (strstr(upname, "SIG") != upname)
     search_base = 3;
-
+  
   for (signum = 0; signum < NSIG; signum++) {
     if (sys_sigabbrev[signum] != NULL) {
       if (strcmp(upname, sys_sigabbrev[signum] + search_base) == 0) {
 	*ret = signum;
+
 	free(upname);
-	
-	return 0;
+	return TRUE;
       }
     }
   }
 
   free(upname);
-  return 1;
+  return FALSE;
 }
