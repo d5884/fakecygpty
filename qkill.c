@@ -10,12 +10,12 @@
 #define PROGNAME "qkill"
 
 typedef enum { TRUE = 1, FALSE = 0 } bool_t;
+void usage();
 
 bool_t string_to_integer(const char *str, int *ret);
 bool_t string_to_signum(const char *str, int *ret);
 bool_t signame_to_signum(const char*signame, int *ret);
 
-void usage();
 
 int main(int argc, char *argv[])
 {
