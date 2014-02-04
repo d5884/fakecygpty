@@ -10,97 +10,128 @@
 #define PROGNAME "qkill"
 
 typedef enum { TRUE = 1, FALSE = 0 } bool_t;
+struct parsed_argv {
+  bool_t pid_is_winpid;
+  bool_t verbose;
+  bool_t use_sigqueue;
+  int signum;
+  int sigval;
+};
+
+bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_index);
 void usage();
 
 bool_t string_to_integer(const char *str, int *ret);
 bool_t string_to_signum(const char *str, int *ret);
 bool_t signame_to_signum(const char*signame, int *ret);
 
-
 int main(int argc, char *argv[])
 {
-  bool_t flag_winpid = FALSE;
-  bool_t flag_signal_specified = FALSE;
-  bool_t flag_pid_found = FALSE;
-  bool_t flag_verbose = FALSE;
-  int signum = 0;
-  int sigval_int = 0;
-  int opt;
+  struct parsed_argv params;
+  bool_t succeeded = FALSE;
   int i;
+
+
+  if (!parse_argv(argc, argv, &params, &i))
+    exit(EXIT_FAILURE);
+
+  for (; i < argc; i++) {
+    pid_t pid;
+    union sigval sigval;
+
+    if (!string_to_integer(argv[i], &pid)) {
+      fprintf(stderr, "%s: Invalid pid - %s\n", PROGNAME, argv[i]);
+      continue;
+    }
+    if (params.pid_is_winpid && (pid = cygwin_winpid_to_pid(pid)) < 0) {
+      fprintf(stderr, "%s: Not a cygwin process - %s\n", PROGNAME, argv[i]);
+      continue;
+    }
+
+    if (params.use_sigqueue) {
+      if (params.verbose)
+	fprintf(stderr, "invoke:sigqueue(pid=%d,signum=%d,sigval=%#08x)\n",
+		pid, params.signum, params.sigval);
+      sigval.sival_int = params.sigval;
+      if (sigqueue(pid, params.signum, sigval) != 0) {
+	fprintf(stderr, "%s:(%d) %s\n", PROGNAME, pid, strerror(errno));
+      }
+    } else {
+      if (params.verbose)
+	fprintf(stderr, "invoke:kill(pid=%d,signum=%d)\n", pid, params.signum);
+      if (kill(pid, params.signum) != 0) {
+	fprintf(stderr, "%s:(%d) %s\n", PROGNAME, pid, strerror(errno));
+      }
+    }
+
+    succeeded = TRUE;
+  }
+
+  exit(succeeded ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_index)
+{
+  bool_t flag_pid_found = FALSE;
+  int opt;
+
   
+  /* init */
+  result->pid_is_winpid = FALSE;
+  result->use_sigqueue = FALSE;
+  result->verbose = FALSE;
+  result->signum = SIGTERM;
+  result->sigval = 0;
+
   opterr = 0; /* suppress auto error */
   while(!flag_pid_found && (opt = getopt(argc, argv, "+vws:i:h")) != -1) {
     switch(opt) {
     case 'w':
-      flag_winpid = TRUE;
+      result->pid_is_winpid = TRUE;
       break;
       
     case 's':
     case 'S': /*  for -S[IGSOME] to some */
       if (!string_to_signum(optarg,  &result->signum)) {
 	fprintf(stderr, "%s: Unknown signal: %s\n", PROGNAME, optarg);
-	exit(EXIT_FAILURE);
+	return FALSE;
       }
-      flag_signal_specified = TRUE;
       break;
 
     case 'i':
-      if (!string_to_integer(optarg, &sigval_int)) {
+      if (!string_to_integer(optarg, &result->sigval)) {
 	fprintf(stderr, "%s: Invalid sigval: %s\n", PROGNAME, optarg);
-	exit(EXIT_FAILURE);
+	return FALSE;
       }
+      result->use_sigqueue = TRUE;
       break;
 
     case 'v':
-      flag_verbose = TRUE;
+      result->verbose = TRUE;
       break;
 
     case 'h':
       usage();
-      exit(EXIT_SUCCESS);
+      return FALSE;
 
     case '?':
       if (isdigit(optopt)) {
 	flag_pid_found = TRUE;
       } else {
 	fprintf(stderr, "%s: Invalid option: -%c\n", PROGNAME, optopt);
-	exit(EXIT_FAILURE);
+	return FALSE;
       }
     }
   }
 
-  if (!flag_signal_specified)
-    signum = SIGTERM;
-
   if (optind >= argc) {
     usage();
-    exit(EXIT_FAILURE);
+    return FALSE;
   }
 
-  for (i = optind; i < argc; i++) {
-    pid_t pid;
-    union sigval sigval;
+  *next_index = optind;
 
-    if (!string_to_integer(argv[i], &pid)) {
-      fprintf(stderr, "%s: Invalid pid - %s\n", PROGNAME, argv[i]);
-    }
-    if (flag_winpid && (pid = cygwin_winpid_to_pid(pid)) < 0) {
-      fprintf(stderr, "%s: Not a cygwin process - %s\n", PROGNAME, argv[i]);
-      exit(EXIT_FAILURE);
-    }
-    
-    if (flag_verbose) {
-      fprintf(stderr, "invoke:sigqueue(%d,%d,%d)\n", pid, signum, sigval_int);
-    }
-
-    sigval.sival_int = sigval_int;
-    if (sigqueue(pid, signum, sigval) != 0) {
-      fprintf(stderr, "%s: %s\n", PROGNAME, strerror(errno));
-      exit(EXIT_FAILURE);
-    }
-  }
-
-  exit(EXIT_SUCCESS);
+  return TRUE;
 }
 
 void usage()
