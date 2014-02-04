@@ -36,7 +36,8 @@ int main(int argc, char *argv[])
       break;
       
     case 's':
-      if (!string_to_signum(optarg,  &signum)) {
+    case 'S': /*  for -S[IGSOME] to some */
+      if (!string_to_signum(optarg,  &result->signum)) {
 	fprintf(stderr, "%s: Unknown signal: %s\n", PROGNAME, optarg);
 	exit(EXIT_FAILURE);
       }
