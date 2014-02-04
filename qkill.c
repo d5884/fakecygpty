@@ -137,7 +137,7 @@ bool_t signame_to_signum(const char*signame, int *ret)
     return FALSE;
   strupr(upname);
 
-  if (strstr(upname, "IG") == upname) /* for -s[igsome] to some*/
+  if (strstr(upname, "IG") == upname) /* for -s[igsome] to some */
     search_base = 1;
   else if (strstr(upname, "SIG") != upname)
     search_base = 3;
