@@ -167,7 +167,13 @@ bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_i
 
 void usage()
 {
-  fprintf(stderr, "usage: %s [-w] [-s signal]] [-i sigval] pid [pids...]\n",
+  fprintf(stderr, "usage: %s [-w] [-s signal]] [-i sigval] pid [pids...]\n\n"
+	  "Send signal by sigqueue(3).\n\n"
+	  " -w         pid is windows pid\n"
+	  " -s signal  send signal\n"
+	  " -i sigval  send signal with sigval\n"
+	  " -v         verbose output\n"
+	  " -h         show help\n\n",
 	  PROGNAME);
 }
 
