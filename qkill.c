@@ -41,12 +41,13 @@
 #define PROGNAME "qkill"
 
 typedef enum { TRUE = 1, FALSE = 0 } bool_t;
+
 struct parsed_argv {
-  bool_t pid_is_winpid;
-  bool_t verbose;
-  bool_t use_sigqueue;
-  int signum;
-  int sigval;
+  bool_t pid_is_winpid; /* using pid as windows pid */
+  bool_t verbose;       /* output more verbosely */
+  bool_t use_sigqueue;  /* using sigqueue instead of kill */
+  int signum;           /* signal number */
+  int sigval;           /* signal value  */
 };
 
 bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_index);
@@ -106,8 +107,7 @@ bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_i
   bool_t flag_pid_found = FALSE;
   int opt;
 
-  
-  /* init */
+
   result->pid_is_winpid = FALSE;
   result->use_sigqueue = FALSE;
   result->verbose = FALSE;
