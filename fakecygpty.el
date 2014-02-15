@@ -106,7 +106,7 @@ SIGVAL may be integer.  if it's nil, 0 will be used."
       (zerop (call-process fakecygpty-sigqueue-program nil nil nil
 			   (number-to-string pid)
 			   (prin1-to-string sigcode t)
-			   (number-to-string (or sigval "0")))))))
+			   (number-to-string (or sigval 0)))))))
 
 (defun fakecygpty--ignored-program (program)
   "Return non-nil if PROGRAM is run without fakecygpty on `start-process'.
