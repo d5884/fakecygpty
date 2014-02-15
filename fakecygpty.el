@@ -33,8 +33,8 @@
   :group 'fakecygpty
   :type 'file)
 
-(defcustom fakecygpty-sigqueue-program (executable-find "sigqueue")
-  "Program file name of sigqueue."
+(defcustom fakecygpty-qkill-program (executable-find "qkill")
+  "Program file name of qkill."
   :group 'fakecygpty
   :type 'file)
 
@@ -61,8 +61,8 @@
 	     (memq system-type '(ms-dos windows-nt))
 	     fakecygpty-program
 	     (executable-find fakecygpty-program)
-	     fakecygpty-sigqueue-program
-	     (executable-find fakecygpty-sigqueue-program))
+	     fakecygpty-qkill-program
+	     (executable-find fakecygpty-qkill-program))
     (unless fakecygpty--advice-defined
       (fakecygpty--make-advice)
       (setq fakecygpty--advice-defined t))
@@ -84,8 +84,8 @@
   (and (processp process)
        (process-get process :fakecygpty-p)))
 
-(defun fakecygpty-sigqueue (process sigcode &optional sigval)
-  "Send PROCESS the signal with code SIGCODE by `fakecygpty-sigqueue-program'.
+(defun fakecygpty-qkill (process sigcode &optional sigval)
+  "Send PROCESS the signal with code SIGCODE by `fakecygpty-qkill-program'.
 PROCESS may also be a number specifying the process id of the
 process to signal; in this case, the process need not be a child of
 this Emacs.
@@ -103,10 +103,12 @@ SIGVAL may be integer.  if it's nil, 0 will be used."
 					   (current-buffer)))))
 	      (t nil))))
     (when pid
-      (zerop (call-process fakecygpty-sigqueue-program nil nil nil
+      (zerop (call-process fakecygpty-qkill-program nil nil nil
+			   "-w"
+			   "-s" (prin1-to-string sigcode t)
+			   "-i" (number-to-string (or sigval 0))
 			   (number-to-string pid)
-			   (prin1-to-string sigcode t)
-			   (number-to-string (or sigval 0)))))))
+			   )))))
 
 (defun fakecygpty--ignored-program (program)
   "Return non-nil if PROGRAM is run without fakecygpty on `start-process'.
@@ -117,7 +119,7 @@ An ignored pattern is used from `fakecygpty-ignored-program-regexps'"
 		      fakecygpty-ignored-program-regexps))))
 
 (defun fakecygpty--make-advice ()
-  "Make advices for fakecygpty and sigqueue."
+  "Make advices for fakecygpty and qkill."
   (defadvice start-process (around fakecygpty--start-process last activate)
     "If `process-connection-type' is non-nil, invoke PROGRAM by `fakecygpty-program'."
     (if (and process-connection-type	; if non-nil, required pty.
@@ -165,10 +167,10 @@ An ignored pattern is used from `fakecygpty-ignored-program-regexps'"
 	ad-do-it)))
 
   (defadvice signal-process (around fakecygpty--signal-process activate)
-    "Send signal by `fakecygpty-sigqueue' for cygwin process.
+    "Send signal by `fakecygpty-qkill' for cygwin process.
 So it's able to send any type signal.
 For windows process, Emacs native `signal-process' will be invoked."
-    (if (fakecygpty-sigqueue (ad-get-arg 0) (ad-get-arg 1))
+    (if (fakecygpty-qkill (ad-get-arg 0) (ad-get-arg 1))
 	(setq ad-return-value 0)
       ad-do-it
       ))
@@ -197,7 +199,7 @@ For windows process, Emacs native `signal-process' will be invoked."
     "Send SIGWINCH signal with a window size information when process is invoked by `fakecygpty'.
 The window size information is caluclated by lines * 65536 + columns."
     (if (and (fakecygpty-process-p (ad-get-arg 0))
-	     (fakecygpty-sigqueue (ad-get-arg 0) 'SIGWINCH
+	     (fakecygpty-qkill (ad-get-arg 0) 'SIGWINCH
 				  (+ (* 65536 (ad-get-arg 1))
 				     (ad-get-arg 2))))
 	(setq ad-return-value t)
