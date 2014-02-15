@@ -1,4 +1,4 @@
-;;; fakecygpty.el --- execute cygwin pty commands using pipe.
+;;; fakecygpty.el --- Execute cygwin pty commands using pipe.
 
 ;; Copyright (C) 2014  Daisuke Kobayashi
 
