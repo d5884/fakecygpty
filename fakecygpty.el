@@ -167,3 +167,7 @@ For windows process, emacs native `signal-process' will be invoked."
 	ad-do-it))
     )
   (setq fakecygpty--activated t))
+
+(provide 'fakecygpty)
+
+;;; fakecygpty.el ends here
