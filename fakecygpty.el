@@ -24,11 +24,19 @@
 
 ;;; Code:
 
+(defgroup fakecygpty nil
+  "Execute cygwin pty commands using pipe."
+  :group 'processes)
+
 (defcustom fakecygpty-program (executable-find "fakecygpty")
-  "Program file name of fakecygpty.")
+  "Program file name of fakecygpty."
+  :group 'fakecygpty
+  :type 'file)
 
 (defcustom fakecygpty-sigqueue-program (executable-find "sigqueue")
-  "Program file name of sigqueue.")
+  "Program file name of sigqueue."
+  :group 'fakecygpty
+  :type 'file)
 
 (defvar fakecygpty-enabled t
   "If non-nil, `start-process' invokes program by fakecygpty."
