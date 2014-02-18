@@ -251,7 +251,7 @@ ssize_t safe_read(int fd, void *buf, size_t count)
   return ret;
 }
 
-ssize_t safe_write(int fd, void *buf, size_t count)
+ssize_t safe_write_full(int fd, void *buf, size_t count)
 {
   ssize_t ret;
 
@@ -262,7 +262,7 @@ ssize_t safe_write(int fd, void *buf, size_t count)
 	buf += ret;
 	count -= ret;
       }
-  } while(ret < 0 && errno == EINTR);
+  } while(count > 0 || (ret < 0 && errno == EINTR));
 
   return ret;
 }
@@ -402,7 +402,7 @@ main(int argc, char* argv[])
 	{
 	  ret = safe_read(masterfd, buf, BUFSIZE);
 	  if (ret > 0)
-	    safe_write(1, buf, ret);
+	    safe_write_full(1, buf, ret);
 	  else
 	    break;
 	}
@@ -410,7 +410,7 @@ main(int argc, char* argv[])
 	{
 	  ret = safe_read(0, buf, BUFSIZE);
 	  if (ret > 0)
-	    safe_write(masterfd, buf, ret);
+	    safe_write_full(masterfd, buf, ret);
 	  else
 	    {
 	      FD_CLR(0, &sel0);
