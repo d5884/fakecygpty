@@ -137,6 +137,8 @@ exec_target(char* argv[])
       exit (1);
     }
 
+  setup_tty_attributes();
+
   pid = fork();
   if (pid < 0)
     {
@@ -386,7 +388,6 @@ main(int argc, char* argv[])
   
   exec_target(argv); /* This sets globals masterfd, child_pid */
 
-  setup_tty_attributes();
   setup_signal_handlers();
 
   FD_ZERO(&sel0);
