@@ -75,12 +75,7 @@
 #define COMMAND_PREFIX	 "f_"
 #define MY_NAME "fakecygpty"
 
-/* global variables */
-int child_pid;		/* pid of child proces  */
-int masterfd;		/* fd of pty served to child process */
 
-volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
-volatile sig_atomic_t sig_window_size = -1;     /* window size info */
 
 void signal_pass_handler(int signum, siginfo_t *info, void *unused);
 void sigwinch_handler(int signum, siginfo_t *info, void *unused);
@@ -90,6 +85,13 @@ struct sigtrap_desc {
   int signum;
   void  (*action)(int, siginfo_t *, void *);
 };
+
+/* global variables */
+int child_pid;		/* pid of child proces  */
+int masterfd;		/* fd of pty served to child process */
+
+volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
+volatile sig_atomic_t sig_window_size = -1;     /* window size info */
 
 /* signals requiring to trap */
 struct sigtrap_desc sigtrap_descs[] =
