@@ -74,6 +74,7 @@
 #define BUFSIZE		 1024	/* size of communication buffer */
 #define COMMAND_PREFIX	 "f_"
 #define MY_NAME "fakecygpty"
+#define PTY_HOLD_MODE "*pty_holder*"
 
 /* prototypes */
 void exec_target(char* argv[]);
@@ -92,7 +93,7 @@ void setup_signal_handlers();
 
 void resize_window(int window_size_info);
 
-void tty_holder(void);
+void pty_holder(void);
 
 /* signal trapping descriptor */
 struct sigtrap_desc {
@@ -175,6 +176,10 @@ exec_target(char* argv[])
 
     if (slave > 2) close(slave);
 
+    if (strcmp(argv[0], PTY_HOLD_MODE) == 0) {
+      pty_holder();
+      exit(0);
+    }
     execvp(argv[0], argv);
 
     fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
@@ -350,6 +355,31 @@ void resize_window(int window_size_info)
     }
 }
 
+void pty_holder(void)
+{
+  struct termios tm;
+  struct sigaction newsig;
+
+  /* echo on */
+  if (tcgetattr(0, &tm) == 0) {
+    tm.c_lflag |= ECHO;
+    tcsetattr(0, TCSANOW, &tm);
+  }
+
+  /* ignore some signals */
+  memset(&newsig, 0, sizeof(newsig));
+  newsig.sa_handler = SIG_IGN;
+  sigemptyset(&newsig.sa_mask);
+
+  sigaction(SIGINT, &newsig, NULL);
+  sigaction(SIGQUIT, &newsig, NULL);
+  sigaction(SIGTSTP, &newsig, NULL);
+
+  /* do nothing */
+  while (1)
+    sleep(1);
+}
+
 int
 main(int argc, char* argv[])
 {
@@ -374,13 +404,12 @@ main(int argc, char* argv[])
   else if (argc >=2)
     argv++;
   else
-    {
-      fputs("usage: fakecygpty <command> [args...]", stderr);
-      exit(1);
-    }
+    argv[0] = PTY_HOLD_MODE;
 
   if (isatty(0))
     {
+      if (strcmp(argv[0], PTY_HOLD_MODE) == 0)
+	exit(1);
       execvp(argv[0], argv);
       fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
       exit(1);

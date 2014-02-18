@@ -123,11 +123,13 @@ An ignored pattern is used from `fakecygpty-ignored-program-regexps'"
   (defadvice start-process (around fakecygpty--start-process last activate)
     "If `process-connection-type' is non-nil, invoke PROGRAM by `fakecygpty-program'."
     (if (and process-connection-type	; if non-nil, required pty.
-	     (ad-get-arg 2)
-	     (not (fakecygpty--ignored-program (ad-get-arg 2))))
+	     ;; (ad-get-arg 2)
+	     (or (not (ad-get-arg 2))
+		 (not (fakecygpty--ignored-program (ad-get-arg 2)))))
 	(progn
 	  ;; insert fakecygpty at program file name position.
-	  (ad-set-args 3 (cons (ad-get-arg 2) (ad-get-args 3)))
+	  (when (ad-get-arg 2)
+	    (ad-set-args 3 (cons (ad-get-arg 2) (ad-get-args 3))))
 	  (ad-set-arg 2 fakecygpty-program)
 	  ad-do-it
 	  (when (processp ad-return-value)
@@ -152,7 +154,7 @@ An ignored pattern is used from `fakecygpty-ignored-program-regexps'"
 			 (format
 			  (concat
 			   "X=`ls /proc/*/ppid | xargs grep -l \"^%s$\" 2>/dev/null` ; "
-			   "X=`dirname $X 2>/dev/null` && cat `echo -n \"$X/ctty\"`")
+			   "X=`dirname $X 2>/dev/null` && cat $X/ctty")
 			  (process-id (ad-get-arg 0)))))
 		  (replace-regexp-in-string "\r?\n" "" (buffer-string))
 		"?")))))
@@ -177,18 +179,26 @@ For windows process, Emacs native `signal-process' will be invoked."
 
   (defadvice interrupt-process (around fakecygpty--interrupt-process activate)
     "Send SIGINT signal by `signal-process'."
-    (unless (zerop (signal-process (ad-get-arg 0) 'SIGINT))
-      ad-do-it))
+    (if (and (ad-get-arg 1) (fakecygpty-process-p (ad-get-arg 0)))
+	(progn
+	  (send-string (ad-get-arg 1) "\C-c")
+	  (message "interrupt!!!"))
+      (unless (zerop (signal-process (ad-get-arg 0) 'SIGINT))
+	ad-do-it)))
 
   (defadvice quit-process (around fakecygpty--quit-process activate)
     "Send SIGQUIT signal by `signal-process'."
-    (unless (zerop (signal-process (ad-get-arg 0) 'SIGQUIT))
-      ad-do-it))
+    (if (and (ad-get-arg 1) (fakecygpty-process-p (ad-get-arg 0)))
+	(send-string (ad-get-arg 1) "\C-\\")
+      (unless (zerop (signal-process (ad-get-arg 0) 'SIGQUIT))
+	ad-do-it)))
 
   (defadvice stop-process (around fakecygpty--stop-process activate)
     "Send SIGTSTP signal by `signal-process'."
-    (unless (zerop (signal-process (ad-get-arg 0) 'SIGTSTP))
-      ad-do-it))
+    (if (and (ad-get-arg 1) (fakecygpty-process-p (ad-get-arg 0)))
+	(send-string (ad-get-arg 1) "\C-z")
+      (unless (zerop (signal-process (ad-get-arg 0) 'SIGTSTP))
+	ad-do-it)))
 
   (defadvice continue-process (around fakecygpty--continue-process activate)
     "Send SIGCONT signal by `signal-process'."
