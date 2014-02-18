@@ -75,10 +75,24 @@
 #define COMMAND_PREFIX	 "f_"
 #define MY_NAME "fakecygpty"
 
+/* prototypes */
+void exec_target(char* argv[]);
 
+void setup_tty_attributes();
+char *real_command_name(char* my_name);
+
+BOOL WINAPI ctrl_handler(DWORD e);
+
+ssize_t safe_read(int fd, void *buf, size_t count);
+ssize_t safe_write_full(int fd, void *buf, size_t count);
 
 void signal_pass_handler(int signum, siginfo_t *info, void *unused);
 void sigwinch_handler(int signum, siginfo_t *info, void *unused);
+void setup_signal_handlers();
+
+void resize_window(int window_size_info);
+
+void tty_holder(void);
 
 /* signal trapping descriptor */
 struct sigtrap_desc {
