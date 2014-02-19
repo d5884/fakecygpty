@@ -80,7 +80,8 @@
 /* prototypes */
 void exec_target(char* argv[]);
 
-void setup_tty_attributes();
+void init_tty_attribute(struct termios *tm);
+void setup_tty_attributes(struct termios *tm);
 char *real_command_name(char* my_name);
 
 BOOL WINAPI ctrl_handler(DWORD e);
@@ -130,8 +131,11 @@ void
 exec_target(char* argv[])
 {
   int pid;
+  struct termios tm;
 
-  pid = forkpty(&masterfd, NULL, NULL, NULL);
+  setup_tty_attributes(&tm);
+
+  pid = forkpty(&masterfd, NULL, &tm, NULL);
 
   if (pid < 0)
     {
@@ -151,32 +155,58 @@ exec_target(char* argv[])
       exit(1);
     }
 
-  setup_tty_attributes();
-
   child_pid = pid;
 
   return;
 }
 
-void
-setup_tty_attributes (void)
+void init_tty_attribute(struct termios *tm)
 {
-  struct termios tm;
+  /*
+   * initial values from fhandler_termios::tcinit()
+   *  in cygwin/winsup/cygwin/fhandler_termios.cc
+   */
+  tm->c_iflag = BRKINT | ICRNL | IXON;
+  tm->c_oflag = OPOST | ONLCR;
+  tm->c_lflag = B38400 | CS8 | CREAD;
+  tm->c_cflag = ISIG | ICANON | ECHO | IEXTEN;
 
-  if (tcgetattr(masterfd, &tm) == 0)
-    {
-      /* setup values from child_setup_tty() in emacs/src/sysdep.c */
-      tm.c_iflag &= ~(IUCLC | ISTRIP);
-      tm.c_iflag |= IGNCR;
-      tm.c_oflag &= ~(ONLCR | OLCUC | TAB3);
-      tm.c_oflag |= OPOST;
-      tm.c_lflag &= ~ECHO;
-      tm.c_lflag |= ISIG | ICANON;
-      tm.c_cc[VERASE] = _POSIX_VDISABLE;
-      tm.c_cc[VKILL] = _POSIX_VDISABLE;
-      tm.c_cc[VEOF] = 'D'&037;
-      tcsetattr(masterfd, TCSANOW, &tm);
-    }
+  tm->c_cc[VDISCARD] = CFLUSH;
+  tm->c_cc[VEOL]     = CEOL;
+  tm->c_cc[VEOL2]    = CEOL2;
+  tm->c_cc[VEOF]     = CEOF;
+  tm->c_cc[VERASE]   = CERASE;
+  tm->c_cc[VINTR]    = CINTR;
+  tm->c_cc[VKILL]    = CKILL;
+  tm->c_cc[VLNEXT]   = CLNEXT;
+  tm->c_cc[VMIN]     = 1;
+  tm->c_cc[VQUIT]    = CQUIT;
+  tm->c_cc[VREPRINT] = CRPRNT;
+  tm->c_cc[VSTART]   = CSTART;
+  tm->c_cc[VSTOP]    = CSTOP;
+  tm->c_cc[VSUSP]    = CSUSP;
+  tm->c_cc[VSWTC]    = CSWTCH;
+  tm->c_cc[VTIME]    = 0;
+  tm->c_cc[VWERASE]  = CWERASE;
+
+  tm->c_ispeed = tm->c_ospeed = B38400;
+}
+
+void
+setup_tty_attributes (struct termios *tm)
+{
+  init_tty_attribute(tm);
+
+  /* setup values from child_setup_tty() in emacs/src/sysdep.c */
+  tm->c_iflag &= ~(IUCLC | ISTRIP);
+  tm->c_iflag |= IGNCR;
+  tm->c_oflag &= ~(ONLCR | OLCUC | TAB3);
+  tm->c_oflag |= OPOST;
+  tm->c_lflag &= ~ECHO;
+  tm->c_lflag |= ISIG | ICANON;
+  tm->c_cc[VERASE] = _POSIX_VDISABLE;
+  tm->c_cc[VKILL] = _POSIX_VDISABLE;
+  tm->c_cc[VEOF] = CTRL('D');
 }
 
 char *
