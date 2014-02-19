@@ -145,14 +145,18 @@ exec_target(char* argv[])
 
   if (pid == 0)
     {
-      if (strcmp(argv[0], PTY_HOLD_MODE) == 0) {
-	pty_holder();
-	exit(0);
-      }
-      execvp(argv[0], argv);
+      if (strcmp(argv[0], PTY_HOLD_MODE) == 0)
+	{
+	  pty_holder();
+	  exit(0);
+	}
+      else
+	{
+	  execvp(argv[0], argv);
 
-      fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
-      exit(1);
+	  fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
+	  exit(1);
+	}
     }
 
   child_pid = pid;
