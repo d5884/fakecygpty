@@ -70,6 +70,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/ioctl.h>
+#include <pty.h>
 
 #define BUFSIZE		 1024	/* size of communication buffer */
 #define COMMAND_PREFIX	 "f_"
@@ -128,19 +129,10 @@ struct sigtrap_desc sigtrap_descs[] =
 void
 exec_target(char* argv[])
 {
-  int fd;
   int pid;
 
-  masterfd = open("/dev/ptmx", O_RDWR);
-  if (masterfd < 0)
-    {
-      perror("Cannot open pseudo tty");
-      exit (1);
-    }
+  pid = forkpty(&masterfd, NULL, NULL, NULL);
 
-  setup_tty_attributes();
-
-  pid = fork();
   if (pid < 0)
     {
       perror("Failed to fork");
@@ -149,42 +141,17 @@ exec_target(char* argv[])
 
   if (pid == 0)
     {
-      int slave;
-
-      setsid();
-
-      slave = open(ptsname (masterfd), O_RDWR);
-
-      if (slave < 0)
-	{
-	  perror ("Failed to open slave fd");
-	  exit (1);
-	}
-
-    for (fd = 0 ; fd < 3 ; fd++)
-      {
-	if (slave != fd)
-	  {
-	    if (dup2(slave, fd) < 0)
-	      {
-		perror("Failed to dup2");
-		exit(1);
-	      }
-	  }
-	fcntl(fd, F_SETFD, 0);
+      if (strcmp(argv[0], PTY_HOLD_MODE) == 0) {
+	pty_holder();
+	exit(0);
       }
+      execvp(argv[0], argv);
 
-    if (slave > 2) close(slave);
-
-    if (strcmp(argv[0], PTY_HOLD_MODE) == 0) {
-      pty_holder();
-      exit(0);
+      fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
+      exit(1);
     }
-    execvp(argv[0], argv);
 
-    fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
-    exit(1);
-  }
+  setup_tty_attributes();
 
   child_pid = pid;
 
