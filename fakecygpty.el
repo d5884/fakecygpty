@@ -103,11 +103,13 @@ SIGVAL may be integer.  if it's nil, 0 will be used."
 					   (current-buffer)))))
 	      (t nil))))
     (when pid
-      (zerop (call-process fakecygpty-qkill-program nil nil nil
-			   "-w"
-			   "-s" (prin1-to-string sigcode t)
-			   "-i" (number-to-string (or sigval 0))
-			   (number-to-string pid)
+      (zerop (apply 'call-process fakecygpty-qkill-program nil nil nil
+		    (delq nil `(,@(when (>= pid 0)
+				    (list "-w"))
+				"-s" ,(prin1-to-string sigcode t)
+				,@(when (integerp sigval)
+				    (list "-i" (number-to-string sigval)))
+				,(number-to-string pid)))
 			   )))))
 
 (defun fakecygpty--ignored-program (program)
