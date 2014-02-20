@@ -120,6 +120,38 @@ An ignored pattern is used from `fakecygpty-ignored-program-regexps'"
 			(string-match-p p program))
 		      fakecygpty-ignored-program-regexps))))
 
+(defun fakecygpty--normalize-process-arg (target)
+  "Return process object of TARGET.
+TARGET may be a process, a buffer, or the name of process or buffer.
+nil means current buffer's process."
+  (cond
+   ((processp target)
+    target)
+   ((or (bufferp target)
+	(null target))
+    (or (get-buffer-process (or target (current-buffer)))
+	(error "Buffer %s has no process" (buffer-name target))))
+   ((stringp target)
+    (fakecygpty--normalize-process-arg (or (get-process target)
+					   (get-buffer target)
+					   (error "Process %s does not exist." target))))
+   (t
+    (signal 'wrong-type-argument (list 'processp target)))))
+
+(defun fakecygpty--get-tty-special-char (process type)
+  "Return special char of TYPE from PROCESS's tty."
+  (let ((tty (process-tty-name process)))
+    (when tty
+      (with-temp-buffer
+	(when (eq 0 (call-process "stty" nil (current-buffer) nil "-a" "-F" tty))
+	  (save-match-data
+	    (goto-char (point-min))
+	    (when (re-search-forward (format "%s = \\(\\^?\\)\\([^;]+\\);" type) nil t)
+	      (unless (equal (match-string 2) "<undef>")
+		(if (equal (match-string 1) "^")
+		    (logand (aref (match-string 2) 0) #o037)
+		  (aref (match-string 2) 0))))))))))
+
 (defun fakecygpty--make-advice ()
   "Make advices for fakecygpty and qkill."
   (defadvice start-process (around fakecygpty--start-process last activate)
@@ -163,11 +195,10 @@ An ignored pattern is used from `fakecygpty-ignored-program-regexps'"
 
   (defadvice process-send-eof (around fakecygpty--send-process-eof activate)
     "Send raw C-d code if PROCESS was invoked by fakecygpty."
-    (let ((target (if (ad-get-arg 0)
-		      (get-process (ad-get-arg 0))
-		    (get-buffer-process (current-buffer)))))
-      (if (fakecygpty-process-p target)
-	  (send-string target "\C-d")
+    (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0))))
+      (if (fakecygpty-process-p proc)
+	  (let ((eof-char (fakecygpty--get-tty-special-char proc "eof")))
+	    (when eof-char (send-string proc (char-to-string eof-char))))
 	ad-do-it)))
 
   (defadvice signal-process (around fakecygpty--signal-process activate)
@@ -181,31 +212,46 @@ For windows process, Emacs native `signal-process' will be invoked."
 
   (defadvice interrupt-process (around fakecygpty--interrupt-process activate)
     "Send SIGINT signal by `signal-process'."
-    (if (and (ad-get-arg 1) (fakecygpty-process-p (ad-get-arg 0)))
-	(progn
-	  (send-string (ad-get-arg 1) "\C-c")
-	  (message "interrupt!!!"))
-      (unless (zerop (signal-process (ad-get-arg 0) 'SIGINT))
-	ad-do-it)))
+    (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0)))
+	  (current-grp (ad-get-arg 1))
+	  special-char)
+      (if (and current-grp
+	       (fakecygpty-process-p proc)
+	       (setq special-char (fakecygpty--get-tty-special-char proc "intr")))
+	  (send-string proc (char-to-string special-char))
+	(unless (fakecygpty-qkill (- (process-id proc)) 'SIGINT)
+	  ad-do-it))))
 
   (defadvice quit-process (around fakecygpty--quit-process activate)
     "Send SIGQUIT signal by `signal-process'."
-    (if (and (ad-get-arg 1) (fakecygpty-process-p (ad-get-arg 0)))
-	(send-string (ad-get-arg 1) "\C-\\")
-      (unless (zerop (signal-process (ad-get-arg 0) 'SIGQUIT))
-	ad-do-it)))
+    (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0)))
+	  (current-grp (ad-get-arg 1))
+	  special-char)
+      (if (and current-grp
+	       (fakecygpty-process-p proc)
+	       (setq special-char (fakecygpty--get-tty-special-char proc "quit")))
+	  (send-string proc (char-to-string special-char))
+	(unless (fakecygpty-qkill (- (process-id proc)) 'SIGQUIT)
+	  ad-do-it))))
 
   (defadvice stop-process (around fakecygpty--stop-process activate)
     "Send SIGTSTP signal by `signal-process'."
-    (if (and (ad-get-arg 1) (fakecygpty-process-p (ad-get-arg 0)))
-	(send-string (ad-get-arg 1) "\C-z")
-      (unless (zerop (signal-process (ad-get-arg 0) 'SIGTSTP))
-	ad-do-it)))
+    (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0)))
+	  (current-grp (ad-get-arg 1))
+	  special-char)
+      (if (and current-grp
+	       (fakecygpty-process-p proc)
+	       (setq special-char (fakecygpty--get-tty-special-char proc "susp")))
+	  (send-string proc (char-to-string special-char))
+	(unless (fakecygpty-qkill (- (process-id proc)) 'SIGTSTP)
+	  ad-do-it))))
 
   (defadvice continue-process (around fakecygpty--continue-process activate)
     "Send SIGCONT signal by `signal-process'."
-    (unless (zerop (signal-process (ad-get-arg 0) 'SIGCONT))
-      ad-do-it))
+    (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0)))
+	  (current-grp (ad-get-arg 1)))
+      (unless (fakecygpty-qkill (- (process-id proc)) 'SIGCONT)
+	ad-do-it)))
 
   (defadvice set-process-window-size (around fakecygpty--set-process-window-size activate)
     "Send SIGWINCH signal with a window size information when process is invoked by `fakecygpty'.
