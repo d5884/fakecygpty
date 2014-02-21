@@ -120,7 +120,9 @@ struct sigtrap_desc sigtrap_descs[] =
     { SIGTERM,  signal_pass_handler },
     { SIGWINCH, sigwinch_handler    },
     { SIGUSR1,  signal_pass_handler },
-    { SIGUSR2,  signal_pass_handler }
+    { SIGUSR2,  signal_pass_handler },
+    { SIGTSTP,  signal_pass_handler },
+    { SIGCONT,  signal_pass_handler }
   };
 
 #define SIGTRAP_COUNT (sizeof(sigtrap_descs)/sizeof(struct sigtrap_desc))
