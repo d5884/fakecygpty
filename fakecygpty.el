@@ -267,6 +267,17 @@ The window size information is caluclated by lines * 65536 + columns."
 				     (ad-get-arg 2))))
 	(setq ad-return-value t)
       ad-do-it))
+
+  (eval-after-load "gdb-mi"
+    '(defadvice gdb-io-interrupt (around fakecygpty--gdb-io-interrupt-workaround activate)
+	 "Workaround for gdb-io-interrupt.  This function needs real CTRL-C singal."
+	 (if (not fakecygpty--activated)
+	     ad-do-it
+	   (ad-disable-advice 'interrupt-process 'around 'fakecygpty--interrupt-process)
+	   (ad-activate 'interrupt-process)
+	   ad-do-it
+	   (ad-enable-advice 'interrupt-process 'around 'fakecygpty--interrupt-process)
+	   (ad-activate 'interrupt-process))))
   )
 
 (provide 'fakecygpty)
