@@ -167,7 +167,8 @@ nil means current buffer's process."
 	  (ad-set-arg 2 fakecygpty-program)
 	  ad-do-it
 	  (when (processp ad-return-value)
-	    (process-put ad-return-value :fakecygpty-p t)))
+	    (process-put ad-return-value :fakecygpty-p
+			 (if (ad-get-arg 3) t 'pty))))
       ad-do-it))
 
   (defadvice process-command (after fakecygpty--process-command activate)
@@ -187,6 +188,13 @@ nil means current buffer's process."
 			 (format "/proc/%s/ctty" (process-id (ad-get-arg 0)))))
 		  (replace-regexp-in-string "\r?\n" "" (buffer-string))
 		"?")))))
+
+  (defadvice process-status (after fakecygpty--process-status activate)
+    "Change return value 'exit to 'failed for pty allocation only mode."
+    (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0))))
+      (when (and (eq (fakecygpty-process-p proc) 'pty)
+		 (memq ad-return-value '(exit signal)))
+	(setq ad-return-value 'failed))))
 
   (defadvice process-send-eof (around fakecygpty--send-process-eof activate)
     "Send raw C-d code if PROCESS was invoked by fakecygpty."
