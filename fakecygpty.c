@@ -262,6 +262,56 @@ ssize_t safe_write_full(int fd, void *buf, size_t count)
   return ret;
 }
 
+/*
+ * Workaround for cygwin's 'behavior of EOF detection.
+ * On a linux system, write("\n[EOF]somthing") cause EOF, but cygwin is not.
+ * so need to recognize indivisually before and after EOF.
+ */
+ssize_t safe_write_full_checking_eof(int fd, void *buf, size_t length)
+{
+  struct termios tm;
+  char eof_char;
+  size_t rest;
+  ssize_t ret;
+  void *next_eof;
+
+  /* retrieve EOF char on this pty */
+  if (tcgetattr(fd, &tm) == 0)
+    eof_char = tm.c_cc[VEOF];
+  else
+    eof_char = __POSIX_VDISABLE;
+
+  if (eof_char == _POSIX_VDISABLE)
+    return safe_write_full(fd, buf, length);
+
+  rest = length;
+
+  while (rest > 0 && (next_eof = memchr(buf, eof_char, rest)) != NULL)
+    {
+      ret = safe_write_full(fd, buf, next_eof - buf);
+      if (ret < 0) return ret;
+
+      /* workaround for flushing input buffer.. */
+      /* It seems continuous write(2) calls are combined, so insert sleep. */
+      usleep(1);
+      ret = safe_write_full(fd, &eof_char, 1);
+      if (ret < 0) return ret;
+
+      /* workaround for flushing input buffer.. */
+      usleep(1);
+      rest = rest - (next_eof - buf + 1);
+      buf = next_eof + 1;
+    }
+
+  if (rest > 0)
+    {
+      ret = safe_write_full(fd, buf, rest);
+      if (ret < 0) return ret;
+    }
+
+  return length;
+}
+
 void sigwinch_handler(int signum, siginfo_t *info, void *unused)
 {
   sig_winch_caught = TRUE;
@@ -421,7 +471,10 @@ main(int argc, char* argv[])
 	{
 	  ret = safe_read(masterfd, buf, BUFSIZE);
 	  if (ret > 0)
-	    safe_write_full(1, buf, ret);
+	    {
+	      if (safe_write_full(1, buf, ret) < 0)
+		break;
+	    }
 	  else
 	    break;
 	}
@@ -429,7 +482,10 @@ main(int argc, char* argv[])
 	{
 	  ret = safe_read(0, buf, BUFSIZE);
 	  if (ret > 0)
-	    safe_write_full(masterfd, buf, ret);
+	    {
+	      if (safe_write_full_checking_eof(masterfd, buf, ret) < 0)
+		break;
+	    }
 	  else
 	    {
 	      FD_CLR(0, &sel0);
