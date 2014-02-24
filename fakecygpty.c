@@ -86,6 +86,7 @@ BOOL WINAPI ctrl_handler(DWORD e);
 
 ssize_t safe_read(int fd, void *buf, size_t count);
 ssize_t safe_write_full(int fd, void *buf, size_t count);
+ssize_t safe_write_full_checking_eof(int fd, void *buf, size_t length);
 
 void signal_pass_handler(int signum, siginfo_t *info, void *unused);
 void sigwinch_handler(int signum, siginfo_t *info, void *unused);
@@ -294,6 +295,7 @@ void setup_signal_handlers()
   struct sigaction newsig;
   int i;
   
+  memset(&newsig, 0, sizeof(newsig));
   newsig.sa_flags = SA_SIGINFO;
   sigemptyset(&newsig.sa_mask);
 
