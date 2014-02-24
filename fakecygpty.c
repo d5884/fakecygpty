@@ -135,8 +135,33 @@ exec_target(char* argv[])
 {
   int pid;
   struct termios tm;
+  struct sigaction newsig;
 
-  pid = forkpty(&masterfd, NULL, NULL, NULL);
+  masterfd = open("/dev/ptmx", O_RDWR);
+
+  /* set control tty */
+  if (ioctl(masterfd, TIOCSCTTY, 1) != 0 )
+    perror("Failed to set control tty");
+
+  /* set up tty attribute */
+  if (tcgetattr(masterfd, &tm) < 0)
+    perror("Faild to tcgetattr on masterfd");
+  else {
+    setup_tty_attributes(&tm);
+    if (tcsetattr(masterfd, TCSANOW, &tm) < 0)
+      perror("Failed to tcsetattr on masterfd");
+  }
+
+  /* don't stop by background I/O */
+  memset(&newsig, 0, sizeof(newsig));
+  newsig.sa_handler = SIG_IGN;
+  sigemptyset(&newsig.sa_mask);
+  if (sigaction(SIGTTOU, &newsig, NULL) < 0)
+    fprintf(stderr, "Failed to ignore signal SIGTTOU: %s\n", strerror(errno));
+  if (sigaction(SIGTTIN, &newsig, NULL) < 0)
+    fprintf(stderr, "Failed to ignore signal SIGTTIN: %s\n", strerror(errno));
+
+  pid = fork();
 
   if (pid < 0)
     {
@@ -146,9 +171,28 @@ exec_target(char* argv[])
 
   if (pid == 0)
     {
-      tcgetattr(0, &tm);
-      setup_tty_attributes(&tm);
-      tcsetattr(0, TCSANOW, &tm);
+      int slave;
+      int i;
+
+      slave = open(ptsname(masterfd), O_RDWR);
+      close(masterfd);
+
+      if (slave < 0)
+	{
+	  perror("Failed to open slave pty");
+	  exit(1);
+	}
+
+      for (i = 0; i < 3; i++)
+	{
+	  if (slave != i)
+	    {
+	      dup2(slave, i);
+	      fcntl(i, F_SETFD, 0);
+	    }
+	}
+      if (slave > 2)
+	close(slave);
 
       if (pty_hold_mode)
 	{
@@ -157,6 +201,12 @@ exec_target(char* argv[])
 	}
       else
 	{
+	  /* make new process group and make it foreground */
+	  if (setpgid(0, 0) < 0)
+	    perror("Failed to setpgid");
+	  if (tcsetpgrp(0, getpgid(getpid())) < 0)
+	    perror("Failed to change foreground pgid");
+
 	  execvp(argv[0], argv);
 
 	  fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
