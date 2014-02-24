@@ -75,7 +75,6 @@
 #define BUFSIZE		 1024	/* size of communication buffer */
 #define COMMAND_PREFIX	 "f_"
 #define MY_NAME "fakecygpty"
-#define PTY_HOLD_MODE "*pty_holder*"
 
 /* prototypes */
 void exec_target(char* argv[]);
@@ -105,6 +104,8 @@ struct sigtrap_desc {
 /* global variables */
 int child_pid;		/* pid of child proces  */
 int masterfd;		/* fd of pty served to child process */
+
+int pty_hold_mode = FALSE; /* pty hold mode flag */
 
 volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
 volatile sig_atomic_t sig_window_size = -1;     /* window size info */
@@ -148,7 +149,7 @@ exec_target(char* argv[])
       setup_tty_attributes(&tm);
       tcsetattr(0, TCSANOW, &tm);
 
-      if (strcmp(argv[0], PTY_HOLD_MODE) == 0)
+      if (pty_hold_mode)
 	{
 	  pty_holder();
 	  exit(0);
@@ -374,11 +375,11 @@ main(int argc, char* argv[])
   else if (argc >=2)
     argv++;
   else
-    argv[0] = PTY_HOLD_MODE;
+    pty_hold_mode = TRUE;
 
   if (isatty(0))
     {
-      if (strcmp(argv[0], PTY_HOLD_MODE) == 0)
+      if (pty_hold_mode)
 	exit(1);
       execvp(argv[0], argv);
       fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
