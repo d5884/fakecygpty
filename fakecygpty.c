@@ -78,6 +78,7 @@
 
 /* prototypes */
 void exec_target(char* argv[]);
+void pty_holder(void);
 
 void setup_tty_attributes(struct termios *tm);
 char *real_command_name(char* my_name);
@@ -88,13 +89,11 @@ ssize_t safe_read(int fd, void *buf, size_t count);
 ssize_t safe_write_full(int fd, void *buf, size_t count);
 ssize_t safe_write_full_checking_eof(int fd, void *buf, size_t length);
 
+void setup_signal_handlers();
 void signal_pass_handler(int signum, siginfo_t *info, void *unused);
 void sigwinch_handler(int signum, siginfo_t *info, void *unused);
-void setup_signal_handlers();
 
 void resize_window(int window_size_info);
-
-void pty_holder(void);
 
 /* signal trapping descriptor */
 struct sigtrap_desc {
@@ -111,7 +110,7 @@ int pty_hold_mode = FALSE; /* pty hold mode flag */
 volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
 volatile sig_atomic_t sig_window_size = -1;     /* window size info */
 
-/* signals requiring to trap */
+/* signals trap required */
 struct sigtrap_desc sigtrap_descs[] = {
   { SIGHUP,   signal_pass_handler },
   { SIGINT,   signal_pass_handler },
@@ -126,6 +125,98 @@ struct sigtrap_desc sigtrap_descs[] = {
 };
 
 #define SIGTRAP_COUNT (sizeof(sigtrap_descs)/sizeof(struct sigtrap_desc))
+
+/* codes */
+
+int main(int argc, char* argv[])
+{
+  fd_set sel, sel0;
+  int status;
+  char* newarg0;
+
+  /* SIGINT and SIGBREAK are indistinctive under cygwin environment. */
+  /* Using Win32API to handle SIGINT.                               */
+  SetConsoleCtrlHandler(ctrl_handler, TRUE);
+
+  if (argc < 1) {
+    fputs("Unable to get arg[0].", stderr);
+    exit(1);
+  }
+
+  newarg0 = real_command_name(argv[0]);
+
+  if (newarg0)
+    argv[0] = newarg0;
+  else if (argc >=2)
+    argv++;
+  else
+    pty_hold_mode = TRUE;
+
+  if (isatty(0)) {
+    if (pty_hold_mode)
+      exit(1);
+    execvp(argv[0], argv);
+    fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
+    exit(1);
+  }
+
+  exec_target(argv); /* This sets globals masterfd, child_pid */
+
+  setup_signal_handlers();
+
+  FD_ZERO(&sel0);
+  FD_SET(masterfd, &sel0);
+  FD_SET(0, &sel0);
+
+  /* communication loop */
+  while (1) {
+    char buf[BUFSIZE];
+    int ret;
+
+    if (sig_winch_caught == TRUE) {
+      sig_winch_caught = FALSE;
+      resize_window(sig_window_size);
+    }
+
+    sel = sel0;
+    if (select (FD_SETSIZE, &sel, NULL, NULL, NULL) <= 0) {
+      if(errno == EINTR)
+	continue;
+      else
+	break;
+    }
+
+    if (FD_ISSET(masterfd, &sel)) {
+      ret = safe_read(masterfd, buf, BUFSIZE);
+      if (ret > 0) {
+	if (safe_write_full(1, buf, ret) < 0)
+	  break;
+      }
+      else
+	break;
+    }
+    else if (FD_ISSET(0, &sel)) {
+      ret = safe_read(0, buf, BUFSIZE);
+      if (ret > 0) {
+	if (safe_write_full_checking_eof(masterfd, buf, ret) < 0)
+	  break;
+      } else {
+	FD_CLR(0, &sel0);
+	close(masterfd);
+      }
+    }
+  }
+
+  while(waitpid(child_pid, &status, 0) < 0 && errno == EINTR)
+    ;
+
+  if (WIFEXITED(status))
+    return WEXITSTATUS(status);
+  else if(WIFSIGNALED(status)) /* ntemacs cannot distinct killed by signal */
+    return 0x80 +  WTERMSIG(status);
+
+  return 0;
+}
 
 /* Create pty and fork/exec target process */
 /* This function sets child_pid and masterfd */
@@ -207,6 +298,33 @@ void exec_target(char* argv[])
   child_pid = pid;
 
   return;
+}
+
+/* pty holder */
+/* this is used for calling start-process with null program name. */
+void pty_holder(void)
+{
+  struct termios tm;
+  struct sigaction newsig;
+
+  /* echo on */
+  if (tcgetattr(0, &tm) == 0) {
+    tm.c_lflag |= ECHO;
+    tcsetattr(0, TCSANOW, &tm);
+  }
+
+  /* ignore some signals */
+  memset(&newsig, 0, sizeof(newsig));
+  newsig.sa_handler = SIG_IGN;
+  sigemptyset(&newsig.sa_mask);
+
+  sigaction(SIGINT, &newsig, NULL);
+  sigaction(SIGQUIT, &newsig, NULL);
+  sigaction(SIGTSTP, &newsig, NULL);
+
+  /* do nothing */
+  while (1)
+    sleep(1);
 }
 
 void setup_tty_attributes (struct termios *tm)
@@ -338,15 +456,24 @@ ssize_t safe_write_full_checking_eof(int fd, void *buf, size_t length)
   return length;
 }
 
-void sigwinch_handler(int signum, siginfo_t *info, void *unused)
+void setup_signal_handlers()
 {
-  sig_winch_caught = TRUE;
-  if (info->si_code == SI_QUEUE) 
-    sig_window_size = info->si_value.sival_int;
-  else
-    sig_window_size = -1;
+  struct sigaction newsig;
+  int i;
+
+  memset(&newsig, 0, sizeof(newsig));
+  newsig.sa_flags = SA_SIGINFO;
+  sigemptyset(&newsig.sa_mask);
+
+  for (i = 0; i < SIGTRAP_COUNT; i++) {
+    newsig.sa_sigaction = sigtrap_descs[i].action;
+    if (sigaction(sigtrap_descs[i].signum, &newsig, NULL) < 0)
+      fprintf(stderr, "Failed to sigaction on %d: %s\n",
+	      sigtrap_descs[i].signum, strerror(errno));
+  }
 }
 
+/* pass signals to child */
 void signal_pass_handler(int signum, siginfo_t *info, void *unused)
 {
   union sigval sigval;
@@ -363,21 +490,13 @@ void signal_pass_handler(int signum, siginfo_t *info, void *unused)
   errno = saved_errno;
 }
 
-void setup_signal_handlers()
+void sigwinch_handler(int signum, siginfo_t *info, void *unused)
 {
-  struct sigaction newsig;
-  int i;
-  
-  memset(&newsig, 0, sizeof(newsig));
-  newsig.sa_flags = SA_SIGINFO;
-  sigemptyset(&newsig.sa_mask);
-
-  for (i = 0; i < SIGTRAP_COUNT; i++) {
-    newsig.sa_sigaction = sigtrap_descs[i].action;
-    if (sigaction(sigtrap_descs[i].signum, &newsig, NULL) < 0)
-      fprintf(stderr, "Failed to sigaction on %d: %s\n",
-	      sigtrap_descs[i].signum, strerror(errno));
-  }
+  sig_winch_caught = TRUE;
+  if (info->si_code == SI_QUEUE)
+    sig_window_size = info->si_value.sival_int;
+  else
+    sig_window_size = -1;
 }
 
 void resize_window(int window_size_info)
@@ -397,119 +516,4 @@ void resize_window(int window_size_info)
     if (ret == 0)
       kill(child_pid, SIGWINCH);
   }
-}
-
-void pty_holder(void)
-{
-  struct termios tm;
-  struct sigaction newsig;
-
-  /* echo on */
-  if (tcgetattr(0, &tm) == 0) {
-    tm.c_lflag |= ECHO;
-    tcsetattr(0, TCSANOW, &tm);
-  }
-
-  /* ignore some signals */
-  memset(&newsig, 0, sizeof(newsig));
-  newsig.sa_handler = SIG_IGN;
-  sigemptyset(&newsig.sa_mask);
-
-  sigaction(SIGINT, &newsig, NULL);
-  sigaction(SIGQUIT, &newsig, NULL);
-  sigaction(SIGTSTP, &newsig, NULL);
-
-  /* do nothing */
-  while (1)
-    sleep(1);
-}
-
-int main(int argc, char* argv[])
-{
-  fd_set sel, sel0;
-  int status;
-  char* newarg0;
-
-  /* SIGINT and SIGBREAK are indistinctive under cygwin environment. */
-  /* Using Win32API to handle SIGINT.                              */
-  SetConsoleCtrlHandler(ctrl_handler, TRUE);
-
-  if (argc < 1) {
-    fputs("Unable to get arg[0].", stderr);
-    exit(1);
-  }
-
-  newarg0 = real_command_name(argv[0]);
-
-  if (newarg0)
-    argv[0] = newarg0;
-  else if (argc >=2)
-    argv++;
-  else
-    pty_hold_mode = TRUE;
-
-  if (isatty(0)) {
-    if (pty_hold_mode)
-      exit(1);
-    execvp(argv[0], argv);
-    fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
-    exit(1);
-  }
-  
-  exec_target(argv); /* This sets globals masterfd, child_pid */
-
-  setup_signal_handlers();
-
-  FD_ZERO(&sel0);
-  FD_SET(masterfd, &sel0);
-  FD_SET(0, &sel0);
-
-  /* communication loop */
-  while (1) {
-    char buf[BUFSIZE];
-    int ret;
-
-    if (sig_winch_caught == TRUE) {
-      sig_winch_caught = FALSE;
-      resize_window(sig_window_size);
-    }
-
-    sel = sel0;
-    if (select (FD_SETSIZE, &sel, NULL, NULL, NULL) <= 0) {
-      if(errno == EINTR)
-	continue;
-      else
-	break;
-    }
-      
-    if (FD_ISSET(masterfd, &sel)) {
-      ret = safe_read(masterfd, buf, BUFSIZE);
-      if (ret > 0) {
-	if (safe_write_full(1, buf, ret) < 0)
-	  break;
-      }
-      else
-	break;
-    }
-    else if (FD_ISSET(0, &sel)) {
-      ret = safe_read(0, buf, BUFSIZE);
-      if (ret > 0) {
-	if (safe_write_full_checking_eof(masterfd, buf, ret) < 0)
-	  break;
-      } else {
-	FD_CLR(0, &sel0);
-	close(masterfd);
-      }
-    }
-  }
-
-  while(waitpid(child_pid, &status, 0) < 0 && errno == EINTR)
-    ;
-  
-  if (WIFEXITED(status))
-    return WEXITSTATUS(status);
-  else if(WIFSIGNALED(status)) /* ntemacs cannot distinct killed by signal */
-    return 0x80 +  WTERMSIG(status); 
-  
-  return 0;
 }
