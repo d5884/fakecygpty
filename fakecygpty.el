@@ -180,16 +180,11 @@ nil means current buffer's process."
     (when (fakecygpty-process-p (ad-get-arg 0))
       (setq ad-return-value
 	    (with-temp-buffer
-	      ;; NTEmacs cannot see cygwin's `/proc' file-system, so using cygwin shell.
-	      ;; Finding fakecygpty's subprocess's tty-name.
+	      ;; NTEmacs cannot see cygwin's `/proc' file-system, so using cygwin program.
+	      ;; Finding fakecygpty's tty-name.
 	      (if (\= 0 (call-process
-			 "sh" nil (current-buffer) nil
-			 "-c"
-			 (format
-			  (concat
-			   "X=`ls /proc/*/ppid | xargs grep -l \"^%s$\" 2>/dev/null` ; "
-			   "X=`dirname $X 2>/dev/null` && cat $X/ctty")
-			  (process-id (ad-get-arg 0)))))
+			 "cat" nil (current-buffer) nil
+			 (format "/proc/%s/ctty" (process-id (ad-get-arg 0)))))
 		  (replace-regexp-in-string "\r?\n" "" (buffer-string))
 		"?")))))
 
