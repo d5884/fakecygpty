@@ -112,26 +112,24 @@ volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
 volatile sig_atomic_t sig_window_size = -1;     /* window size info */
 
 /* signals requiring to trap */
-struct sigtrap_desc sigtrap_descs[] =
-  {
-    { SIGHUP,   signal_pass_handler },
-    { SIGINT,   signal_pass_handler },
-    { SIGQUIT,  signal_pass_handler },
-    { SIGALRM,  signal_pass_handler },
-    { SIGTERM,  signal_pass_handler },
-    { SIGWINCH, sigwinch_handler    },
-    { SIGUSR1,  signal_pass_handler },
-    { SIGUSR2,  signal_pass_handler },
-    { SIGTSTP,  signal_pass_handler },
-    { SIGCONT,  signal_pass_handler }
-  };
+struct sigtrap_desc sigtrap_descs[] = {
+  { SIGHUP,   signal_pass_handler },
+  { SIGINT,   signal_pass_handler },
+  { SIGQUIT,  signal_pass_handler },
+  { SIGALRM,  signal_pass_handler },
+  { SIGTERM,  signal_pass_handler },
+  { SIGWINCH, sigwinch_handler    },
+  { SIGUSR1,  signal_pass_handler },
+  { SIGUSR2,  signal_pass_handler },
+  { SIGTSTP,  signal_pass_handler },
+  { SIGCONT,  signal_pass_handler }
+};
 
 #define SIGTRAP_COUNT (sizeof(sigtrap_descs)/sizeof(struct sigtrap_desc))
 
 /* Create pty and fork/exec target process */
 /* This function sets child_pid and masterfd */
-void
-exec_target(char* argv[])
+void exec_target(char* argv[])
 {
   int pid;
   struct termios tm;
@@ -163,64 +161,55 @@ exec_target(char* argv[])
 
   pid = fork();
 
-  if (pid < 0)
-    {
-      perror("Failed to fork");
-      return;
+  if (pid < 0) {
+    perror("Failed to fork");
+    return;
+  }
+
+  if (pid == 0) {
+    int slave;
+    int i;
+
+    slave = open(ptsname(masterfd), O_RDWR);
+    close(masterfd);
+
+    if (slave < 0) {
+      perror("Failed to open slave pty");
+      exit(1);
     }
 
-  if (pid == 0)
-    {
-      int slave;
-      int i;
-
-      slave = open(ptsname(masterfd), O_RDWR);
-      close(masterfd);
-
-      if (slave < 0)
-	{
-	  perror("Failed to open slave pty");
-	  exit(1);
-	}
-
-      for (i = 0; i < 3; i++)
-	{
-	  if (slave != i)
-	    {
-	      dup2(slave, i);
-	      fcntl(i, F_SETFD, 0);
-	    }
-	}
-      if (slave > 2)
-	close(slave);
-
-      if (pty_hold_mode)
-	{
-	  pty_holder();
-	  exit(0);
-	}
-      else
-	{
-	  /* make new process group and make it foreground */
-	  if (setpgid(0, 0) < 0)
-	    perror("Failed to setpgid");
-	  if (tcsetpgrp(0, getpgid(getpid())) < 0)
-	    perror("Failed to change foreground pgid");
-
-	  execvp(argv[0], argv);
-
-	  fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
-	  exit(1);
-	}
+    for (i = 0; i < 3; i++) {
+      if (slave != i) {
+	dup2(slave, i);
+	fcntl(i, F_SETFD, 0);
+      }
     }
+    if (slave > 2)
+      close(slave);
+
+    if (pty_hold_mode) {
+      pty_holder();
+      exit(0);
+    } else {
+      /* make new process group and make it foreground */
+      if (setpgid(0, 0) < 0)
+	perror("Failed to setpgid");
+      if (tcsetpgrp(0, getpgid(getpid())) < 0)
+	perror("Failed to change foreground pgid");
+
+      execvp(argv[0], argv);
+
+      fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
+      exit(1);
+    }
+  }
 
   child_pid = pid;
 
   return;
 }
 
-void
-setup_tty_attributes (struct termios *tm)
+void setup_tty_attributes (struct termios *tm)
 {
   /* setup values from child_setup_tty() in emacs/src/sysdep.c */
   tm->c_iflag &= ~(IUCLC | ISTRIP);
@@ -234,54 +223,44 @@ setup_tty_attributes (struct termios *tm)
   tm->c_cc[VEOF] = CTRL('D');
 }
 
-char *
-real_command_name(char* my_name)
+char *real_command_name(char* my_name)
 {
   char *p;
 
   /* Assume mutlbyte characters do not occur here */
   p = strrchr(my_name, '/');
   if (p == NULL)
-    {
-      p = strrchr(my_name, '\\');
+    p = strrchr(my_name, '\\');
 
-      if (p == NULL)
-	p = my_name;
-      else
-	p++;
-    }
+  if (p == NULL)
+    p = my_name;
   else
     p++;
 
   if (strcmp(p, MY_NAME) == 0)
-    {
-      return NULL;    /* I am invoked as explicit wrapper program */
-    }
+    return NULL;    /* I am invoked as explicit wrapper program */
 
-  if (strncmp(p, COMMAND_PREFIX, strlen (COMMAND_PREFIX)) != 0)
-    {
-      fprintf(stderr, "Illegal program name format. \"%s\"\n", my_name);
-      exit(1);
-    }
+  if (strncmp(p, COMMAND_PREFIX, strlen (COMMAND_PREFIX)) != 0) {
+    fprintf(stderr, "Illegal program name format. \"%s\"\n", my_name);
+    exit(1);
+  }
 
   return p + strlen(COMMAND_PREFIX);
 }
 
 /* Signal handler for convert SIGINT into ^C on pty */
 /* This seems not able to be done within cygwin POSIX framework */
-BOOL WINAPI
-ctrl_handler(DWORD e)
+BOOL WINAPI ctrl_handler(DWORD e)
 {
-  switch (e)
-    {
-    case CTRL_C_EVENT:
-      write(masterfd, "\003", 1);
-      return TRUE;
+  switch (e) {
+  case CTRL_C_EVENT:
+    write(masterfd, "\003", 1);
+    return TRUE;
 
-    case CTRL_CLOSE_EVENT:
-      kill(child_pid, SIGKILL);
-      return FALSE;
-    }
+  case CTRL_CLOSE_EVENT:
+    kill(child_pid, SIGKILL);
+    return FALSE;
+  }
   return FALSE;
 }
 
@@ -302,11 +281,10 @@ ssize_t safe_write_full(int fd, void *buf, size_t count)
 
   do {
     ret = write(fd, buf, count);
-    if (ret > 0) 
-      {
-	buf += ret;
-	count -= ret;
-      }
+    if (ret > 0) {
+      buf += ret;
+      count -= ret;
+    }
   } while(count > 0 || (ret < 0 && errno == EINTR));
 
   return ret;
@@ -329,35 +307,33 @@ ssize_t safe_write_full_checking_eof(int fd, void *buf, size_t length)
   if (tcgetattr(fd, &tm) == 0)
     eof_char = tm.c_cc[VEOF];
   else
-    eof_char = __POSIX_VDISABLE;
+    eof_char = _POSIX_VDISABLE;
 
   if (eof_char == _POSIX_VDISABLE)
     return safe_write_full(fd, buf, length);
 
   rest = length;
 
-  while (rest > 0 && (next_eof = memchr(buf, eof_char, rest)) != NULL)
-    {
-      ret = safe_write_full(fd, buf, next_eof - buf);
-      if (ret < 0) return ret;
+  while (rest > 0 && (next_eof = memchr(buf, eof_char, rest)) != NULL) {
+    ret = safe_write_full(fd, buf, next_eof - buf);
+    if (ret < 0) return ret;
 
-      /* workaround for flushing input buffer.. */
-      /* It seems continuous write(2) calls are combined, so insert sleep. */
-      usleep(1);
-      ret = safe_write_full(fd, &eof_char, 1);
-      if (ret < 0) return ret;
+    /* workaround for flushing input buffer.. */
+    /* It seems continuous write(2) calls are combined, so insert sleep. */
+    usleep(1);
+    ret = safe_write_full(fd, &eof_char, 1);
+    if (ret < 0) return ret;
 
-      /* workaround for flushing input buffer.. */
-      usleep(1);
-      rest = rest - (next_eof - buf + 1);
-      buf = next_eof + 1;
-    }
+    /* workaround for flushing input buffer.. */
+    usleep(1);
+    rest = rest - (next_eof - buf + 1);
+    buf = next_eof + 1;
+  }
 
-  if (rest > 0)
-    {
-      ret = safe_write_full(fd, buf, rest);
-      if (ret < 0) return ret;
-    }
+  if (rest > 0) {
+    ret = safe_write_full(fd, buf, rest);
+    if (ret < 0) return ret;
+  }
 
   return length;
 }
@@ -377,16 +353,13 @@ void signal_pass_handler(int signum, siginfo_t *info, void *unused)
   int saved_errno;
   
   saved_errno = errno;
-  if (info->si_code == SI_QUEUE) 
-    {
-      sigval = info->si_value;
-      sigqueue(child_pid, signum, sigval);
+  if (info->si_code == SI_QUEUE) {
+    sigval = info->si_value;
+    sigqueue(child_pid, signum, sigval);
       
-    }
-  else
-    {
-      kill(child_pid, signum);
-    }
+  } else {
+    kill(child_pid, signum);
+  }
   errno = saved_errno;
 }
 
@@ -399,13 +372,12 @@ void setup_signal_handlers()
   newsig.sa_flags = SA_SIGINFO;
   sigemptyset(&newsig.sa_mask);
 
-  for (i = 0; i < SIGTRAP_COUNT; i++)
-    {
-      newsig.sa_sigaction = sigtrap_descs[i].action;
-      if (sigaction(sigtrap_descs[i].signum, &newsig, NULL) < 0)
-	fprintf(stderr, "Failed to sigaction on %d: %s\n", 
-		sigtrap_descs[i].signum, strerror(errno));
-    }
+  for (i = 0; i < SIGTRAP_COUNT; i++) {
+    newsig.sa_sigaction = sigtrap_descs[i].action;
+    if (sigaction(sigtrap_descs[i].signum, &newsig, NULL) < 0)
+      fprintf(stderr, "Failed to sigaction on %d: %s\n",
+	      sigtrap_descs[i].signum, strerror(errno));
+  }
 }
 
 void resize_window(int window_size_info)
@@ -413,19 +385,18 @@ void resize_window(int window_size_info)
   struct winsize w;
   int ret;
 
-  if (window_size_info >= 0) 
-    {
-      /* size info: high-16bit => rows, low-16bit => cols */
-      w.ws_row = window_size_info >> 16;
-      w.ws_col = window_size_info & 0xFFFF;
+  if (window_size_info >= 0) {
+    /* size info: high-16bit => rows, low-16bit => cols */
+    w.ws_row = window_size_info >> 16;
+    w.ws_col = window_size_info & 0xFFFF;
 
-      do {
-	ret = ioctl(masterfd, TIOCSWINSZ, &w);
-      } while (ret < 0 && errno == EINTR);
+    do {
+      ret = ioctl(masterfd, TIOCSWINSZ, &w);
+    } while (ret < 0 && errno == EINTR);
 
-      if (ret == 0)
-	kill(child_pid, SIGWINCH);
-    }
+    if (ret == 0)
+      kill(child_pid, SIGWINCH);
+  }
 }
 
 void pty_holder(void)
@@ -453,8 +424,7 @@ void pty_holder(void)
     sleep(1);
 }
 
-int
-main(int argc, char* argv[])
+int main(int argc, char* argv[])
 {
   fd_set sel, sel0;
   int status;
@@ -464,11 +434,10 @@ main(int argc, char* argv[])
   /* Using Win32API to handle SIGINT.                              */
   SetConsoleCtrlHandler(ctrl_handler, TRUE);
 
-  if (argc < 1)
-    {
-      fputs("Unable to get arg[0].", stderr);
-      exit(1);
-    }
+  if (argc < 1) {
+    fputs("Unable to get arg[0].", stderr);
+    exit(1);
+  }
 
   newarg0 = real_command_name(argv[0]);
 
@@ -479,14 +448,13 @@ main(int argc, char* argv[])
   else
     pty_hold_mode = TRUE;
 
-  if (isatty(0))
-    {
-      if (pty_hold_mode)
-	exit(1);
-      execvp(argv[0], argv);
-      fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
+  if (isatty(0)) {
+    if (pty_hold_mode)
       exit(1);
-    }
+    execvp(argv[0], argv);
+    fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
+    exit(1);
+  }
   
   exec_target(argv); /* This sets globals masterfd, child_pid */
 
@@ -497,52 +465,43 @@ main(int argc, char* argv[])
   FD_SET(0, &sel0);
 
   /* communication loop */
-  while (1)
-    {
-      char buf[BUFSIZE];
-      int ret;
+  while (1) {
+    char buf[BUFSIZE];
+    int ret;
 
-      if (sig_winch_caught == TRUE)
-	{
-	  sig_winch_caught = FALSE;
-	  resize_window(sig_window_size);
-	}
-
-      sel = sel0;
-      if (select (FD_SETSIZE, &sel, NULL, NULL, NULL) <= 0) 
-	{
-	  if(errno == EINTR)
-	    continue;
-	  else
-	    break;
-	}
-      
-      if (FD_ISSET(masterfd, &sel))
-	{
-	  ret = safe_read(masterfd, buf, BUFSIZE);
-	  if (ret > 0)
-	    {
-	      if (safe_write_full(1, buf, ret) < 0)
-		break;
-	    }
-	  else
-	    break;
-	}
-      else if (FD_ISSET(0, &sel))
-	{
-	  ret = safe_read(0, buf, BUFSIZE);
-	  if (ret > 0)
-	    {
-	      if (safe_write_full_checking_eof(masterfd, buf, ret) < 0)
-		break;
-	    }
-	  else
-	    {
-	      FD_CLR(0, &sel0);
-	      close(masterfd);
-	    }
-	}
+    if (sig_winch_caught == TRUE) {
+      sig_winch_caught = FALSE;
+      resize_window(sig_window_size);
     }
+
+    sel = sel0;
+    if (select (FD_SETSIZE, &sel, NULL, NULL, NULL) <= 0) {
+      if(errno == EINTR)
+	continue;
+      else
+	break;
+    }
+      
+    if (FD_ISSET(masterfd, &sel)) {
+      ret = safe_read(masterfd, buf, BUFSIZE);
+      if (ret > 0) {
+	if (safe_write_full(1, buf, ret) < 0)
+	  break;
+      }
+      else
+	break;
+    }
+    else if (FD_ISSET(0, &sel)) {
+      ret = safe_read(0, buf, BUFSIZE);
+      if (ret > 0) {
+	if (safe_write_full_checking_eof(masterfd, buf, ret) < 0)
+	  break;
+      } else {
+	FD_CLR(0, &sel0);
+	close(masterfd);
+      }
+    }
+  }
 
   while(waitpid(child_pid, &status, 0) < 0 && errno == EINTR)
     ;
