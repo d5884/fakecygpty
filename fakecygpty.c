@@ -72,7 +72,7 @@
 #include <sys/ioctl.h>
 #include <pty.h>
 
-#define BUFSIZE		 1024	/* size of communication buffer */
+#define BUFSIZE		 4096	/* size of communication buffer */
 #define COMMAND_PREFIX	 "f_"
 #define MY_NAME "fakecygpty"
 
