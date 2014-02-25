@@ -183,9 +183,9 @@ nil means current buffer's process."
 	    (with-temp-buffer
 	      ;; NTEmacs cannot see cygwin's `/proc' file-system, so using cygwin program.
 	      ;; Finding fakecygpty's tty-name.
-	      (if (\= 0 (call-process
-			 "cat" nil (current-buffer) nil
-			 (format "/proc/%s/ctty" (process-id (ad-get-arg 0)))))
+	      (if (zerop (call-process
+			  "cat" nil (current-buffer) nil
+			  (format "/proc/%s/ctty" (process-id (ad-get-arg 0)))))
 		  (replace-regexp-in-string "\r?\n" "" (buffer-string))
 		"?")))))
 
