@@ -143,7 +143,7 @@ nil means current buffer's process."
   (let ((tty (process-tty-name process)))
     (when tty
       (with-temp-buffer
-	(when (eq 0 (call-process "stty" nil (current-buffer) nil "-a" "-F" tty))
+	(when (zerop (call-process "stty" nil (current-buffer) nil "-a" "-F" tty))
 	  (save-match-data
 	    (goto-char (point-min))
 	    (when (re-search-forward (format "%s = \\(\\^?\\)\\([^;]+\\);" type) nil t)
