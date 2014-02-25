@@ -261,6 +261,13 @@ For windows process, Emacs native `signal-process' will be invoked."
 	ad-do-it)
       (setq ad-return-value proc)))
 
+  (defadvice kill-process (around fakecygpty--kill-process activate)
+    "Don't kill if PROCESS is invoked by fakecygpty and pty allocation only mode."
+    (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0))))
+      (if (eq (fakecygpty-process-p proc) 'pty)
+	  (setq ad-return-value proc)
+	ad-do-it)))
+
   (defadvice set-process-window-size (around fakecygpty--set-process-window-size activate)
     "Send SIGWINCH signal with a window size information when process is invoked by `fakecygpty'.
 The window size information is caluclated by lines * 65536 + columns."
