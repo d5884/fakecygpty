@@ -104,7 +104,6 @@ struct sigtrap_desc {
 int child_pid = -1;	/* pid of child proces  */
 int masterfd = -1;	/* fd of pty served to child process */
 
-int pty_hold_mode = FALSE; /* pty hold mode flag */
 
 volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
 volatile sig_atomic_t sig_window_size = -1;     /* window size info */
@@ -131,6 +130,7 @@ int main(int argc, char* argv[])
 {
   fd_set sel, sel0;
   int status;
+  int pty_hold_mode = FALSE;
   char* newarg0;
 
   /* SIGINT and SIGBREAK are indistinctive under cygwin environment. */
