@@ -77,12 +77,15 @@
 #define MY_NAME "fakecygpty"
 
 /* prototypes */
-void exec_target(char* argv[]);
+int open_master_pty(void);
 
-void setup_tty_attributes(struct termios *tm);
+pid_t exec_target(int pty_master_fd, char* argv[]);
+
+void setup_tty_attributes(int tty_fd);
+void set_tty_echo_on(int tty_fd);
+int resize_tty_window(int tty_fd, int window_size_info);
+
 char *real_command_name(char* my_name);
-
-BOOL WINAPI ctrl_handler(DWORD e);
 
 ssize_t safe_read(int fd, void *buf, size_t count);
 ssize_t safe_write_full(int fd, void *buf, size_t count);
@@ -92,7 +95,7 @@ void setup_signal_handlers();
 void signal_pass_handler(int signum, siginfo_t *info, void *unused);
 void sigwinch_handler(int signum, siginfo_t *info, void *unused);
 
-void resize_window(int window_size_info);
+BOOL WINAPI ctrl_handler(DWORD e);
 
 /* signal trapping descriptor */
 struct sigtrap_desc {
@@ -157,7 +160,12 @@ int main(int argc, char* argv[])
     exit(EXIT_FAILURE);
   }
 
-  exec_target(argv); /* This sets globals masterfd, child_pid */
+  masterfd = open_master_pty();
+
+  if (!pty_hold_mode)
+    child_pid = exec_target(masterfd, argv);
+  else
+    set_tty_echo_on(masterfd);
 
   setup_signal_handlers();
 
@@ -172,7 +180,8 @@ int main(int argc, char* argv[])
 
     if (sig_winch_caught == TRUE) {
       sig_winch_caught = FALSE;
-      resize_window(sig_window_size);
+      if (child_pid != -1 && resize_tty_window(masterfd, sig_window_size) == 0)
+	kill(child_pid, SIGWINCH);
     }
 
     sel = sel0;
@@ -209,50 +218,40 @@ int main(int argc, char* argv[])
   } else {
     while(waitpid(child_pid, &status, 0) < 0 && errno == EINTR)
       ;
+
+    if (WIFEXITED(status))
+      status = WEXITSTATUS(status);
+    else if(WIFSIGNALED(status)) /* ntemacs cannot distinct killed by signal */
+      status = 0x80 +  WTERMSIG(status);
   }
 
-  if (WIFEXITED(status))
-    return WEXITSTATUS(status);
-  else if(WIFSIGNALED(status)) /* ntemacs cannot distinct killed by signal */
-    return 0x80 +  WTERMSIG(status);
+  return status;
+}
 
-  return 0;
+int open_master_pty(void)
+{
+  int fd;
+
+  fd = open("/dev/ptmx", O_RDWR);
+  if (fd < 0) {
+    perror("Failed to open /dev/ptmx");
+    return fd;
+  }
+
+  /* set control tty */
+  if (ioctl(fd, TIOCSCTTY, 1) != 0 )
+    perror("Failed to set control tty");
+
+  setup_tty_attributes(fd);
+
+  return fd;
 }
 
 /* Create pty and fork/exec target process */
-/* This function sets child_pid and masterfd */
-void exec_target(char* argv[])
+pid_t exec_target(int pty_master_fd, char* argv[])
 {
-  int pid;
-  struct termios tm;
+  pid_t pid;
   struct sigaction newsig;
-
-  masterfd = open("/dev/ptmx", O_RDWR);
-
-  /* set control tty */
-  if (ioctl(masterfd, TIOCSCTTY, 1) != 0 )
-    perror("Failed to set control tty");
-
-  /* set up tty attribute */
-  if (tcgetattr(masterfd, &tm) < 0)
-    perror("Faild to tcgetattr on masterfd");
-  else {
-    setup_tty_attributes(&tm);
-    if (tcsetattr(masterfd, TCSANOW, &tm) < 0)
-      perror("Failed to tcsetattr on masterfd");
-  }
-
-  if (pty_hold_mode) {
-    /* set up tty attribute */
-    if (tcgetattr(masterfd, &tm) < 0)
-      perror("Faild to tcgetattr on masterfd");
-    else {
-      tm.c_lflag |= ECHO;
-      if (tcsetattr(masterfd, TCSANOW, &tm) < 0)
-	perror("Failed to tcsetattr on masterfd");
-    }
-    return;
-  }
 
   /* don't stop by background I/O */
   memset(&newsig, 0, sizeof(newsig));
@@ -274,8 +273,8 @@ void exec_target(char* argv[])
     int slave;
     int i;
 
-    slave = open(ptsname(masterfd), O_RDWR);
-    close(masterfd);
+    slave = open(ptsname(pty_master_fd), O_RDWR);
+    close(pty_master_fd);
 
     if (slave < 0) {
       perror("Failed to open slave pty");
@@ -303,23 +302,64 @@ void exec_target(char* argv[])
     exit(EXIT_FAILURE);
   }
 
-  child_pid = pid;
-
-  return;
+  return pid;
 }
 
-void setup_tty_attributes (struct termios *tm)
+void setup_tty_attributes (int tty_fd)
 {
-  /* setup values from child_setup_tty() in emacs/src/sysdep.c */
-  tm->c_iflag &= ~(IUCLC | ISTRIP);
-  tm->c_iflag |= IGNCR;
-  tm->c_oflag &= ~(ONLCR | OLCUC | TAB3);
-  tm->c_oflag |= OPOST;
-  tm->c_lflag &= ~ECHO;
-  tm->c_lflag |= ISIG | ICANON;
-  tm->c_cc[VERASE] = _POSIX_VDISABLE;
-  tm->c_cc[VKILL] = _POSIX_VDISABLE;
-  tm->c_cc[VEOF] = CTRL('D');
+  struct termios tm;
+
+  /* set up tty attribute */
+  if (tcgetattr(tty_fd, &tm) < 0)
+    perror("Faild to tcgetattr");
+  else {
+    /* setup values from child_setup_tty() in emacs/src/sysdep.c */
+    tm.c_iflag &= ~(IUCLC | ISTRIP);
+    tm.c_iflag |= IGNCR;
+    tm.c_oflag &= ~(ONLCR | OLCUC | TAB3);
+    tm.c_oflag |= OPOST;
+    tm.c_lflag &= ~ECHO;
+    tm.c_lflag |= ISIG | ICANON;
+    tm.c_cc[VERASE] = _POSIX_VDISABLE;
+    tm.c_cc[VKILL] = _POSIX_VDISABLE;
+    tm.c_cc[VEOF] = CTRL('D');
+
+    if (tcsetattr(tty_fd, TCSANOW, &tm) < 0)
+      perror("Failed to tcsetattr");
+  }
+}
+
+void set_tty_echo_on(int tty_fd)
+{
+  struct termios tm;
+
+  /* set up tty attribute */
+  if (tcgetattr(tty_fd, &tm) < 0)
+    perror("Faild to tcgetattr");
+  else {
+    tm.c_lflag |= ECHO;
+    if (tcsetattr(tty_fd, TCSANOW, &tm) < 0)
+      perror("Failed to tcsetattr");
+  }
+}
+
+
+int resize_tty_window(int fd, int window_size_info)
+{
+  struct winsize w;
+  int ret;
+
+  if (window_size_info >= 0) {
+    /* size info: high-16bit => rows, low-16bit => cols */
+    w.ws_row = window_size_info >> 16;
+    w.ws_col = window_size_info & 0xFFFF;
+
+    do {
+      ret = ioctl(fd, TIOCSWINSZ, &w);
+    } while (ret < 0 && errno == EINTR);
+  }
+
+  return ret;
 }
 
 char *real_command_name(char* my_name)
@@ -345,27 +385,6 @@ char *real_command_name(char* my_name)
   }
 
   return p + strlen(COMMAND_PREFIX);
-}
-
-/* Signal handler for convert SIGINT into ^C on pty */
-/* This seems not able to be done within cygwin POSIX framework */
-BOOL WINAPI ctrl_handler(DWORD e)
-{
-  switch (e) {
-  case CTRL_C_EVENT:
-    if (masterfd != -1) {
-      write(masterfd, "\003", 1);
-      return TRUE;
-    }
-    break;
-
-  case CTRL_CLOSE_EVENT:
-    if (child_pid != -1) {
-      kill(child_pid, SIGKILL);
-      return FALSE;
-    }
-  }
-  return FALSE;
 }
 
 ssize_t safe_read(int fd, void *buf, size_t count)
@@ -491,21 +510,23 @@ void sigwinch_handler(int signum, siginfo_t *info, void *unused)
     sig_window_size = -1;
 }
 
-void resize_window(int window_size_info)
+/* Signal handler for convert SIGINT into ^C on pty */
+/* This seems not able to be done within cygwin POSIX framework */
+BOOL WINAPI ctrl_handler(DWORD e)
 {
-  struct winsize w;
-  int ret;
+  switch (e) {
+  case CTRL_C_EVENT:
+    if (masterfd != -1) {
+      write(masterfd, "\003", 1);
+      return TRUE;
+    }
+    break;
 
-  if (window_size_info >= 0) {
-    /* size info: high-16bit => rows, low-16bit => cols */
-    w.ws_row = window_size_info >> 16;
-    w.ws_col = window_size_info & 0xFFFF;
-
-    do {
-      ret = ioctl(masterfd, TIOCSWINSZ, &w);
-    } while (ret < 0 && errno == EINTR);
-
-    if (ret == 0 && child_pid != -1)
-      kill(child_pid, SIGWINCH);
+  case CTRL_CLOSE_EVENT:
+    if (child_pid != -1) {
+      kill(child_pid, SIGKILL);
+      return FALSE;
+    }
   }
+  return FALSE;
 }
