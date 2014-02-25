@@ -139,7 +139,7 @@ int main(int argc, char* argv[])
 
   if (argc < 1) {
     fputs("Unable to get arg[0].", stderr);
-    exit(1);
+    exit(EXIT_FAILURE);
   }
 
   newarg0 = real_command_name(argv[0]);
@@ -151,12 +151,10 @@ int main(int argc, char* argv[])
   else
     pty_hold_mode = TRUE;
 
-  if (isatty(0)) {
-    if (pty_hold_mode)
-      exit(1);
+  if (isatty(STDIN_FILENO) && !pty_hold_mode) {
     execvp(argv[0], argv);
     fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
-    exit(1);
+    exit(EXIT_FAILURE);
   }
 
   exec_target(argv); /* This sets globals masterfd, child_pid */
@@ -165,7 +163,7 @@ int main(int argc, char* argv[])
 
   FD_ZERO(&sel0);
   FD_SET(masterfd, &sel0);
-  FD_SET(0, &sel0);
+  FD_SET(STDIN_FILENO, &sel0);
 
   /* communication loop */
   while (1) {
@@ -188,19 +186,19 @@ int main(int argc, char* argv[])
     if (FD_ISSET(masterfd, &sel)) {
       ret = safe_read(masterfd, buf, BUFSIZE);
       if (ret > 0) {
-	if (safe_write_full(1, buf, ret) < 0)
+	if (safe_write_full(STDOUT_FILENO, buf, ret) < 0)
 	  break;
       }
       else
 	break;
     }
-    else if (FD_ISSET(0, &sel)) {
-      ret = safe_read(0, buf, BUFSIZE);
+    else if (FD_ISSET(STDIN_FILENO, &sel)) {
+      ret = safe_read(STDIN_FILENO, buf, BUFSIZE);
       if (ret > 0) {
 	if (safe_write_full_checking_eof(masterfd, buf, ret) < 0)
 	  break;
       } else {
-	FD_CLR(0, &sel0);
+	FD_CLR(STDIN_FILENO, &sel0);
 	close(masterfd);
       }
     }
@@ -269,7 +267,7 @@ void exec_target(char* argv[])
 
   if (pid < 0) {
     perror("Failed to fork");
-    return;
+    exit(EXIT_FAILURE);
   }
 
   if (pid == 0) {
@@ -281,7 +279,7 @@ void exec_target(char* argv[])
 
     if (slave < 0) {
       perror("Failed to open slave pty");
-      exit(1);
+      exit(EXIT_FAILURE);
     }
 
     for (i = 0; i < 3; i++) {
@@ -302,7 +300,7 @@ void exec_target(char* argv[])
     execvp(argv[0], argv);
 
     fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
-    exit(1);
+    exit(EXIT_FAILURE);
   }
 
   child_pid = pid;
