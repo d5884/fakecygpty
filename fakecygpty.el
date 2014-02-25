@@ -266,8 +266,8 @@ For windows process, Emacs native `signal-process' will be invoked."
 The window size information is caluclated by lines * 65536 + columns."
     (if (and (fakecygpty-process-p (ad-get-arg 0))
 	     (fakecygpty-qkill (ad-get-arg 0) 'SIGWINCH
-				  (+ (* 65536 (ad-get-arg 1))
-				     (ad-get-arg 2))))
+			       (+ (* 65536 (ad-get-arg 1))
+				  (ad-get-arg 2))))
 	(setq ad-return-value t)
       ad-do-it))
 
