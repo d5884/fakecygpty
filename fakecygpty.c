@@ -102,8 +102,8 @@ struct sigtrap_desc {
 };
 
 /* global variables */
-int child_pid;		/* pid of child proces  */
-int masterfd;		/* fd of pty served to child process */
+int child_pid = -1;	/* pid of child proces  */
+int masterfd = -1;	/* fd of pty served to child process */
 
 int pty_hold_mode = FALSE; /* pty hold mode flag */
 
@@ -372,12 +372,17 @@ BOOL WINAPI ctrl_handler(DWORD e)
 {
   switch (e) {
   case CTRL_C_EVENT:
-    write(masterfd, "\003", 1);
-    return TRUE;
+    if (masterfd != -1) {
+      write(masterfd, "\003", 1);
+      return TRUE;
+    }
+    break;
 
   case CTRL_CLOSE_EVENT:
-    kill(child_pid, SIGKILL);
-    return FALSE;
+    if (child_pid != -1) {
+      kill(child_pid, SIGKILL);
+      return FALSE;
+    }
   }
   return FALSE;
 }
