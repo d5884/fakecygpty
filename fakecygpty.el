@@ -112,6 +112,25 @@ SIGVAL may be integer.  if it's nil, 0 will be used."
 				,(number-to-string pid)))
 			   )))))
 
+(defun fakecygpty-real-process-id (process &optional as-winpid)
+  "Return subprocess's process-id if PROCESS was invoked by fakecygpty."
+  (if (eq (fakecygpty-process-p process) t) ;; not pty only mode
+      (with-temp-buffer
+	(when (zerop
+	       (call-process
+		"sh" nil (current-buffer) nil
+		"-c"
+		(format (if as-winpid
+			    "cat `dirname \\`grep -l %s /proc/*/ppid 2>/dev/null\\``/winpid"
+			  "basename `dirname \\`grep -l %s /proc/*/ppid 2>/dev/null\\``")
+			(process-id process))))
+	  (ignore-errors
+	    (save-match-data
+	      (string-to-number (replace-regexp-in-string "\r?\n" ""
+							  (buffer-string))))))
+	)
+    (process-id process)))
+
 (defun fakecygpty--ignored-program (program)
   "Return non-nil if PROGRAM is run without fakecygpty on `start-process'.
 An ignored pattern is used from `fakecygpty-ignored-program-regexps'"
@@ -223,9 +242,9 @@ For windows process, Emacs native `signal-process' will be invoked."
 	       (fakecygpty-process-p proc)
 	       (setq special-char (fakecygpty--get-tty-special-char proc "intr")))
 	  (send-string proc (char-to-string special-char))
-	(unless (fakecygpty-qkill (- (process-id proc)) 'SIGINT)
-	  ad-do-it))
-      (setq ad-return-value proc)))
+	(unless (and (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) 'SIGINT)
+		     (setq ad-return-value proc))
+	  ad-do-it))))
 
   (defadvice quit-process (around fakecygpty--quit-process activate)
     "Send SIGQUIT signal by `signal-process'."
@@ -236,9 +255,9 @@ For windows process, Emacs native `signal-process' will be invoked."
 	       (fakecygpty-process-p proc)
 	       (setq special-char (fakecygpty--get-tty-special-char proc "quit")))
 	  (send-string proc (char-to-string special-char))
-	(unless (fakecygpty-qkill (- (process-id proc)) 'SIGQUIT)
-	  ad-do-it))
-      (setq ad-return-value proc)))
+	(unless (and (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) 'SIGQUIT)
+		     (setq ad-return-value proc))
+	  ad-do-it))))
 
   (defadvice stop-process (around fakecygpty--stop-process activate)
     "Send SIGTSTP signal by `signal-process'."
@@ -249,17 +268,17 @@ For windows process, Emacs native `signal-process' will be invoked."
 	       (fakecygpty-process-p proc)
 	       (setq special-char (fakecygpty--get-tty-special-char proc "susp")))
 	  (send-string proc (char-to-string special-char))
-	(unless (fakecygpty-qkill (- (process-id proc)) 'SIGTSTP)
-	  ad-do-it))
-      (setq ad-return-value proc)))
+	(unless (and (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) 'SIGTSTP)
+		     (setq ad-return-value proc))
+	  ad-do-it))))
 
   (defadvice continue-process (around fakecygpty--continue-process activate)
     "Send SIGCONT signal by `signal-process'."
     (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0)))
 	  (current-grp (ad-get-arg 1)))
-      (unless (fakecygpty-qkill (- (process-id proc)) 'SIGCONT)
-	ad-do-it)
-      (setq ad-return-value proc)))
+      (unless (and (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) 'SIGCONT)
+		   (setq ad-return-value proc))
+	ad-do-it)))
 
   (defadvice kill-process (around fakecygpty--kill-process activate)
     "Don't kill if PROCESS is invoked by fakecygpty and pty allocation only mode."
