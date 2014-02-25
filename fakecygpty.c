@@ -78,7 +78,6 @@
 
 /* prototypes */
 void exec_target(char* argv[]);
-void pty_holder(void);
 
 void setup_tty_attributes(struct termios *tm);
 char *real_command_name(char* my_name);
@@ -207,8 +206,12 @@ int main(int argc, char* argv[])
     }
   }
 
-  while(waitpid(child_pid, &status, 0) < 0 && errno == EINTR)
-    ;
+  if (pty_hold_mode) {
+    status = 0;
+  } else {
+    while(waitpid(child_pid, &status, 0) < 0 && errno == EINTR)
+      ;
+  }
 
   if (WIFEXITED(status))
     return WEXITSTATUS(status);
@@ -239,6 +242,18 @@ void exec_target(char* argv[])
     setup_tty_attributes(&tm);
     if (tcsetattr(masterfd, TCSANOW, &tm) < 0)
       perror("Failed to tcsetattr on masterfd");
+  }
+
+  if (pty_hold_mode) {
+    /* set up tty attribute */
+    if (tcgetattr(masterfd, &tm) < 0)
+      perror("Faild to tcgetattr on masterfd");
+    else {
+      tm.c_lflag |= ECHO;
+      if (tcsetattr(masterfd, TCSANOW, &tm) < 0)
+	perror("Failed to tcsetattr on masterfd");
+    }
+    return;
   }
 
   /* don't stop by background I/O */
@@ -278,53 +293,21 @@ void exec_target(char* argv[])
     if (slave > 2)
       close(slave);
 
-    if (pty_hold_mode) {
-      pty_holder();
-      exit(0);
-    } else {
-      /* make new process group and make it foreground */
-      if (setpgid(0, 0) < 0)
-	perror("Failed to setpgid");
-      if (tcsetpgrp(0, getpgid(getpid())) < 0)
-	perror("Failed to change foreground pgid");
+    /* make new process group and make it foreground */
+    if (setpgid(0, 0) < 0)
+      perror("Failed to setpgid");
+    if (tcsetpgrp(0, getpgid(getpid())) < 0)
+      perror("Failed to change foreground pgid");
 
-      execvp(argv[0], argv);
+    execvp(argv[0], argv);
 
-      fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
-      exit(1);
-    }
+    fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
+    exit(1);
   }
 
   child_pid = pid;
 
   return;
-}
-
-/* pty holder */
-/* this is used for calling start-process with null program name. */
-void pty_holder(void)
-{
-  struct termios tm;
-  struct sigaction newsig;
-
-  /* echo on */
-  if (tcgetattr(0, &tm) == 0) {
-    tm.c_lflag |= ECHO;
-    tcsetattr(0, TCSANOW, &tm);
-  }
-
-  /* ignore some signals */
-  memset(&newsig, 0, sizeof(newsig));
-  newsig.sa_handler = SIG_IGN;
-  sigemptyset(&newsig.sa_mask);
-
-  sigaction(SIGINT, &newsig, NULL);
-  sigaction(SIGQUIT, &newsig, NULL);
-  sigaction(SIGTSTP, &newsig, NULL);
-
-  /* do nothing */
-  while (1)
-    sleep(1);
 }
 
 void setup_tty_attributes (struct termios *tm)
