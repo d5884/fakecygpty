@@ -466,7 +466,10 @@ void signal_pass_handler(int signum, siginfo_t *info, void *unused)
 {
   union sigval sigval;
   int saved_errno;
-  
+
+  if (child_pid == -1)
+    return;
+
   saved_errno = errno;
   if (info->si_code == SI_QUEUE) {
     sigval = info->si_value;
@@ -480,6 +483,9 @@ void signal_pass_handler(int signum, siginfo_t *info, void *unused)
 
 void sigwinch_handler(int signum, siginfo_t *info, void *unused)
 {
+  if (child_pid == -1)
+    return;
+
   sig_winch_caught = TRUE;
   if (info->si_code == SI_QUEUE)
     sig_window_size = info->si_value.sival_int;
@@ -501,7 +507,7 @@ void resize_window(int window_size_info)
       ret = ioctl(masterfd, TIOCSWINSZ, &w);
     } while (ret < 0 && errno == EINTR);
 
-    if (ret == 0)
+    if (ret == 0 && child_pid != -1)
       kill(child_pid, SIGWINCH);
   }
 }
