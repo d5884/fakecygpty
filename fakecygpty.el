@@ -157,19 +157,23 @@ nil means current buffer's process."
    (t
     (signal 'wrong-type-argument (list 'processp target)))))
 
-(defun fakecygpty--get-tty-special-char (process type)
-  "Return special char of TYPE from PROCESS's tty."
+(defun fakecygpty--process-send-special-char (process type)
+  "Send PROCESS the special char of TYPE from PROCESS's tty."
   (let ((tty (process-tty-name process)))
     (when tty
-      (with-temp-buffer
-	(when (zerop (call-process "stty" nil (current-buffer) nil "-a" "-F" tty))
-	  (save-match-data
-	    (goto-char (point-min))
-	    (when (re-search-forward (format "%s = \\(\\^?\\)\\([^;]+\\);" type) nil t)
-	      (unless (equal (match-string 2) "<undef>")
-		(if (equal (match-string 1) "^")
-		    (logand (aref (match-string 2) 0) #o037)
-		  (aref (match-string 2) 0))))))))))
+      (let ((special-char
+		 (with-temp-buffer
+		   (when (zerop (call-process "stty" nil (current-buffer) nil "-a" "-F" tty))
+		     (save-match-data
+		       (goto-char (point-min))
+		       (when (re-search-forward (format "%s = \\(\\^?\\)\\([^;]+\\);" type) nil t)
+			 (unless (equal (match-string 2) "<undef>")
+			   (if (equal (match-string 1) "^")
+			       (logand (aref (match-string 2) 0) #o037)
+			     (aref (match-string 2) 0)))))))))
+	(when special-char
+	  (process-send-string process (char-to-string special-char))
+	  t)))))
 
 (defun fakecygpty--make-advice ()
   "Make advices for fakecygpty and qkill."
@@ -219,8 +223,8 @@ nil means current buffer's process."
     "Send raw C-d code if PROCESS was invoked by fakecygpty."
     (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0))))
       (if (fakecygpty-process-p proc)
-	  (let ((eof-char (fakecygpty--get-tty-special-char proc "eof")))
-	    (when eof-char (send-string proc (char-to-string eof-char)))
+	  (progn
+	    (fakecygpty--process-send-special-char proc "eof")
 	    (setq ad-return-value proc))
 	ad-do-it)))
 
@@ -233,52 +237,32 @@ For windows process, Emacs native `signal-process' will be invoked."
       ad-do-it
       ))
 
-  (defadvice interrupt-process (around fakecygpty--interrupt-process activate)
-    "Send SIGINT signal by `signal-process'."
-    (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0)))
-	  (current-grp (ad-get-arg 1))
-	  special-char)
-      (if (and current-grp
-	       (fakecygpty-process-p proc)
-	       (setq special-char (fakecygpty--get-tty-special-char proc "intr")))
-	  (send-string proc (char-to-string special-char))
-	(unless (and (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) 'SIGINT)
-		     (setq ad-return-value proc))
-	  ad-do-it))))
-
-  (defadvice quit-process (around fakecygpty--quit-process activate)
-    "Send SIGQUIT signal by `signal-process'."
-    (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0)))
-	  (current-grp (ad-get-arg 1))
-	  special-char)
-      (if (and current-grp
-	       (fakecygpty-process-p proc)
-	       (setq special-char (fakecygpty--get-tty-special-char proc "quit")))
-	  (send-string proc (char-to-string special-char))
-	(unless (and (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) 'SIGQUIT)
-		     (setq ad-return-value proc))
-	  ad-do-it))))
-
-  (defadvice stop-process (around fakecygpty--stop-process activate)
-    "Send SIGTSTP signal by `signal-process'."
-    (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0)))
-	  (current-grp (ad-get-arg 1))
-	  special-char)
-      (if (and current-grp
-	       (fakecygpty-process-p proc)
-	       (setq special-char (fakecygpty--get-tty-special-char proc "susp")))
-	  (send-string proc (char-to-string special-char))
-	(unless (and (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) 'SIGTSTP)
-		     (setq ad-return-value proc))
-	  ad-do-it))))
-
-  (defadvice continue-process (around fakecygpty--continue-process activate)
-    "Send SIGCONT signal by `signal-process'."
-    (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0)))
-	  (current-grp (ad-get-arg 1)))
-      (unless (and (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) 'SIGCONT)
-		   (setq ad-return-value proc))
-	ad-do-it)))
+  (dolist (desc '((interrupt-process 'SIGINT "intr")
+		  (quit-process 'SIGQUIT "quit")
+		  (stop-process 'SIGTSTP "susp")
+		  (continue-process 'SIGCONT nil)))
+    (let ((func (car desc))
+	  (sig (cadr desc))
+	  (cc (caddr desc)))
+      (eval `(defadvice ,func (around ,(intern (format "fakecygpty--%s" func)) activate)
+	       ,(format "Send %s signal by `fakecygpty-qkill'" (eval sig))
+	       (let* ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0)))
+		      (current-grp (and (fakecygpty-process-p proc) (ad-get-arg 1)))
+		      special-char)
+		 (if (cond
+		      ((null current-grp)
+		       (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) ,sig))
+		      ,(if cc
+			   `((fakecygpty--process-send-special-char proc ,cc)
+			     t)
+			 '(nil nil))
+		      ((eq current-grp 'lambda)
+		       (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) ,sig))
+		      (t
+		       (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) ,sig)))
+		     (setq ad-return-value proc)
+		   ad-do-it)))
+	    )))
 
   (defadvice kill-process (around fakecygpty--kill-process activate)
     "Don't kill if PROCESS is invoked by fakecygpty and pty allocation only mode."
