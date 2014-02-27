@@ -36,7 +36,11 @@
 #include <signal.h>
 #include <unistd.h>
 #include <errno.h>
+#include <termios.h>
 #include <sys/cygwin.h>
+#include <sys/fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/wait.h>
 
 #define PROGNAME "qkill"
 
@@ -46,12 +50,15 @@ struct parsed_argv {
   bool_t pid_is_winpid; /* using pid as windows pid */
   bool_t verbose;       /* output more verbosely */
   bool_t use_sigqueue;  /* using sigqueue instead of kill */
+  char *tty_name;       /* try to send tty's foreground pgrp */
   int signum;           /* signal number */
   int sigval;           /* signal value  */
 };
 
 bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_index);
 void usage();
+
+pid_t get_foreground_pgrp(char *tty_name);
 
 bool_t string_to_integer(const char *str, int *ret);
 bool_t string_to_signum(const char *str, int *ret);
@@ -66,6 +73,25 @@ int main(int argc, char *argv[])
 
   if (!parse_argv(argc, argv, &params, &i))
     exit(EXIT_FAILURE);
+
+  /* tty's foreground pgid kill mode */
+  if (params.tty_name != NULL) {
+    pid_t gid = get_foreground_pgrp(params.tty_name);
+    if (gid <= 0) {
+      fprintf(stderr, "%s: Cannot obtain foreground process group on %s - %s\n",
+	      PROGNAME, params.tty_name, strerror(errno));
+      exit(EXIT_FAILURE);
+    } else {
+      if (params.verbose)
+	fprintf(stderr, "invoke:kill(pid=%d(%s),signum=%d)\n",
+		-gid, params.tty_name, params.signum);
+      if (kill(-gid, params.signum) != 0) {
+	fprintf(stderr, "%s:(%d on %s) %s\n", PROGNAME, gid, params.tty_name, strerror(errno));
+	exit(EXIT_FAILURE);
+      }
+    }
+    exit(EXIT_SUCCESS);
+  }
 
   for (; i < argc; i++) {
     pid_t pid;
@@ -112,7 +138,7 @@ bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_i
   result->signum = SIGTERM;
 
   opterr = 0; /* suppress auto error */
-  while(!flag_pid_found && (opt = getopt(argc, argv, "+vws:i:h")) != -1) {
+  while(!flag_pid_found && (opt = getopt(argc, argv, "+vws:S:i:t:h")) != -1) {
     switch(opt) {
     case 'w':
       result->pid_is_winpid = TRUE;
@@ -132,6 +158,10 @@ bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_i
 	return FALSE;
       }
       result->use_sigqueue = TRUE;
+      break;
+
+    case 't':
+      result->tty_name = strdup(optarg);
       break;
 
     case 'v':
@@ -164,14 +194,74 @@ bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_i
 
 void usage()
 {
-  fprintf(stderr, "usage: %s [-w] [-s signal]] [-i sigval] pid [pids...]\n\n"
+  fprintf(stderr, "usage: %s [-wv] [-s sigcode] [-i sigval] {pid [pids...] | -t <tty>}\n\n"
 	  "Send signal by sigqueue(3).\n\n"
-	  " -w         pid is windows pid\n"
-	  " -s signal  send signal\n"
-	  " -i sigval  send signal with sigval\n"
-	  " -v         verbose output\n"
-	  " -h         show help\n\n",
+	  " -w          pid is windows pid\n"
+	  " -v          verbose output\n"
+	  " -s sigcode  send signal with sigcode (default: SIGTERM)\n"
+	  " -i sigval   send signal with sigval\n"
+	  " -t tty_name send signal to tty_name's foreground process group\n"
+	  " -h          show this help\n\n",
 	  PROGNAME);
+}
+
+pid_t get_foreground_pgrp(char *tty_name)
+{
+  int pty_fd;
+  int pipe_fd[2];
+  int ret;
+  int status;
+
+  pipe(pipe_fd);
+
+  pid_t pid = fork();
+  if (pid < 0) {
+    return -1;
+  } else if (pid == 0) {
+    /* discard current ctty */
+    if (setsid() < 0) {
+      int saved_errno = errno;
+      write(pipe_fd[1], &saved_errno, sizeof(saved_errno));
+      exit(EXIT_FAILURE);
+    }
+
+    /* open target's tty */
+    pty_fd = open(tty_name, O_RDWR);
+    if (pty_fd < 0) {
+      int saved_errno = errno;
+      write(pipe_fd[1], &saved_errno, sizeof(saved_errno));
+      exit(EXIT_FAILURE);
+    }
+
+    /* /\* enter target's pgrp *\/
+     * if (setpgid(0, pgid) < 0) {
+     *   int saved_errno = errno;
+     *   write(pipe_fd[1], &saved_errno, sizeof(saved_errno));
+     *   exit(EXIT_FAILURE);
+     * } */
+
+    /* get foreground pgrp */
+    ret = tcgetpgrp(pty_fd);
+    if (ret < 0) {
+      int saved_errno = errno;
+      write(pipe_fd[1], &saved_errno, sizeof(saved_errno));
+      exit(EXIT_FAILURE);
+    }
+
+    write(pipe_fd[1], &ret, sizeof(ret));
+
+    exit(EXIT_SUCCESS);
+  }
+  read(pipe_fd[0], &ret, sizeof(ret));
+  waitpid(pid, &status, 0);
+
+  if (WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS) {
+    printf("%x\n", status);
+    errno = ret;
+    return -1;
+  }
+
+  return ret;
 }
 
 bool_t string_to_integer(const char *str, int *ret)
