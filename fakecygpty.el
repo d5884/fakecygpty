@@ -290,11 +290,11 @@ For windows process, Emacs native `signal-process' will be invoked."
   (defadvice set-process-window-size (around fakecygpty--set-process-window-size activate)
     "Send SIGWINCH signal with a window size information when process is invoked by `fakecygpty'.
 The window size information is caluclated by lines * 65536 + columns."
-    (if (and (fakecygpty-process-p (ad-get-arg 0))
-	     (fakecygpty-qkill (ad-get-arg 0) 'SIGWINCH
-			       (+ (* 65536 (ad-get-arg 1))
-				  (ad-get-arg 2))))
-	(setq ad-return-value t)
+    (if (fakecygpty-process-p (ad-get-arg 0))
+	(setq ad-return-value
+	      (fakecygpty-qkill (ad-get-arg 0) 'SIGWINCH
+				(+ (* 65536 (ad-get-arg 1))
+				   (ad-get-arg 2))))
       ad-do-it))
 
   (eval-after-load "gdb-mi"
