@@ -108,11 +108,8 @@ bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_i
   int opt;
 
 
-  result->pid_is_winpid = FALSE;
-  result->use_sigqueue = FALSE;
-  result->verbose = FALSE;
+  memset(result, 0, sizeof(struct parsed_argv));
   result->signum = SIGTERM;
-  result->sigval = 0;
 
   opterr = 0; /* suppress auto error */
   while(!flag_pid_found && (opt = getopt(argc, argv, "+vws:i:h")) != -1) {
