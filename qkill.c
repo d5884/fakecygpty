@@ -182,7 +182,7 @@ bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_i
     }
   }
 
-  if (optind >= argc) {
+  if (optind >= argc && result->tty_name == NULL) {
     usage();
     return FALSE;
   }
