@@ -233,13 +233,6 @@ pid_t get_foreground_pgrp(char *tty_name)
       exit(EXIT_FAILURE);
     }
 
-    /* /\* enter target's pgrp *\/
-     * if (setpgid(0, pgid) < 0) {
-     *   int saved_errno = errno;
-     *   write(pipe_fd[1], &saved_errno, sizeof(saved_errno));
-     *   exit(EXIT_FAILURE);
-     * } */
-
     /* get foreground pgrp */
     ret = tcgetpgrp(pty_fd);
     if (ret < 0) {
@@ -256,7 +249,6 @@ pid_t get_foreground_pgrp(char *tty_name)
   waitpid(pid, &status, 0);
 
   if (WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS) {
-    printf("%x\n", status);
     errno = ret;
     return -1;
   }
