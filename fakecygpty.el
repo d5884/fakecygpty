@@ -84,13 +84,17 @@
   (and (processp process)
        (process-get process :fakecygpty-p)))
 
-(defun fakecygpty-qkill (process sigcode &optional sigval)
+(defun fakecygpty-qkill (process sigcode &optional sigval as-winpid tty except)
   "Send PROCESS the signal with code SIGCODE by `fakecygpty-qkill-program'.
 PROCESS may also be a number specifying the process id of the
 process to signal; in this case, the process need not be a child of
 this Emacs.
 SIGCODE may be an integer, or a symbol whose name is a signal name.
-SIGVAL may be integer.  if it's nil, 0 will be used."
+SIGVAL may be integer.  if it's nil, 0 will be used.
+If AS-WINPID is non-nil, PROCESS is considered as windows pid.
+If TTY is specified, send signal to TTY's foreground process group.
+If EXCEPT is non-nil and TTY is specified, don't send signal when
+TTY's foreground process group pgid equals PROCESS pid."
   (let ((pid (cond
 	      ((integerp process)
 	       process)
@@ -104,13 +108,18 @@ SIGVAL may be integer.  if it's nil, 0 will be used."
 	      (t nil))))
     (when pid
       (zerop (apply 'call-process fakecygpty-qkill-program nil nil nil
-		    (delq nil `(,@(when (>= pid 0)
+		    (delq nil `(,@(if as-winpid
 				    (list "-w"))
 				"-s" ,(prin1-to-string sigcode t)
 				,@(when (integerp sigval)
 				    (list "-i" (number-to-string sigval)))
-				,(number-to-string pid)))
-			   )))))
+				,@(when tty
+				    (list "-t" tty))
+				,@(when except
+				    (list "-e" (number-to-string pid)))
+				,@(unless tty
+				    (list (number-to-string pid)))))))
+		    )))
 
 (defun fakecygpty-real-process-id (process &optional as-winpid)
   "Return subprocess's process-id if PROCESS was invoked by fakecygpty."
@@ -232,7 +241,7 @@ nil means current buffer's process."
     "Send signal by `fakecygpty-qkill' for cygwin process.
 So it's able to send any type signal.
 For windows process, Emacs native `signal-process' will be invoked."
-    (if (fakecygpty-qkill (ad-get-arg 0) (ad-get-arg 1))
+    (if (fakecygpty-qkill (ad-get-arg 0) (ad-get-arg 1) nil t)
 	(setq ad-return-value 0)
       ad-do-it
       ))
@@ -257,9 +266,11 @@ For windows process, Emacs native `signal-process' will be invoked."
 			     t)
 			 '(nil nil))
 		      ((eq current-grp 'lambda)
-		       (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) ,sig))
+		       (fakecygpty-qkill (fakecygpty-real-process-id proc) ,sig nil nil
+					 (process-tty-name proc) t))
 		      (t
-		       (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) ,sig)))
+		       (fakecygpty-qkill (fakecygpty-real-process-id proc) ,sig nil nil
+					 (process-tty-name proc))))
 		     (setq ad-return-value proc)
 		   ad-do-it)))
 	    )))
