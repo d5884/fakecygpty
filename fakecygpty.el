@@ -249,7 +249,8 @@ For windows process, Emacs native `signal-process' will be invoked."
   (dolist (desc '((interrupt-process 'SIGINT "intr")
 		  (quit-process 'SIGQUIT "quit")
 		  (stop-process 'SIGTSTP "susp")
-		  (continue-process 'SIGCONT nil)))
+		  (continue-process 'SIGCONT nil)
+		  (kill-process 'SIGKILL nil)))
     (let ((func (nth 0 desc))
 	  (sig (nth 1 desc))
 	  (cc (nth 2 desc)))
@@ -258,29 +259,25 @@ For windows process, Emacs native `signal-process' will be invoked."
 	       (let* ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0)))
 		      (current-grp (and (fakecygpty-process-p proc) (ad-get-arg 1)))
 		      special-char)
-		 (if (cond
-		      ((null current-grp)
-		       (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) ,sig))
-		      ,(if cc
-			   `((fakecygpty--process-send-special-char proc ,cc)
-			     t)
-			 '(nil nil))
-		      ((eq current-grp 'lambda)
-		       (fakecygpty-qkill (fakecygpty-real-process-id proc) ,sig nil nil
-					 (process-tty-name proc) t))
-		      (t
-		       (fakecygpty-qkill (fakecygpty-real-process-id proc) ,sig nil nil
-					 (process-tty-name proc))))
+		 (if (and (eq (process-type proc) 'real)
+			  (cond
+			   ((null current-grp)
+			    (fakecygpty-qkill (- (fakecygpty-real-process-id proc)) ,sig))
+			   ,(if cc
+				`((fakecygpty--process-send-special-char proc ,cc)
+				  t)
+			      '(nil nil))
+			   ((eq current-grp 'lambda)
+			    (fakecygpty-qkill (fakecygpty-real-process-id proc)
+					      ,sig nil nil
+					      (process-tty-name proc) t))
+			   (t
+			    (fakecygpty-qkill (fakecygpty-real-process-id proc)
+					      ,sig nil nil
+					      (process-tty-name proc)))))
 		     (setq ad-return-value proc)
 		   ad-do-it)))
 	    )))
-
-  (defadvice kill-process (around fakecygpty--kill-process activate)
-    "Don't kill if PROCESS is invoked by fakecygpty and pty allocation only mode."
-    (let ((proc (fakecygpty--normalize-process-arg (ad-get-arg 0))))
-      (if (eq (fakecygpty-process-p proc) 'pty)
-	  (setq ad-return-value proc)
-	ad-do-it)))
 
   (defadvice set-process-window-size (around fakecygpty--set-process-window-size activate)
     "Send SIGWINCH signal with a window size information when process is invoked by `fakecygpty'.
