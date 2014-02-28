@@ -51,6 +51,8 @@ struct parsed_argv {
   bool_t verbose;       /* output more verbosely */
   bool_t use_sigqueue;  /* using sigqueue instead of kill */
   char *tty_name;       /* try to send tty's foreground pgrp */
+  bool_t excepting;     /* use except pgid */
+  pid_t except_pgid;    /* don't send signal when tty's foreground pgrp's pgid is this */
   int signum;           /* signal number */
   int sigval;           /* signal value  */
 };
@@ -76,23 +78,30 @@ int main(int argc, char *argv[])
 
   /* tty's foreground pgid kill mode */
   if (params.tty_name != NULL) {
-    pid_t gid = get_foreground_pgrp(params.tty_name);
-    if (gid <= 0) {
+    pid_t pgid = get_foreground_pgrp(params.tty_name);
+    if (pgid <= 0) {
       fprintf(stderr, "%s: Cannot obtain foreground process group on %s - %s\n",
 	      PROGNAME, params.tty_name, strerror(errno));
       exit(EXIT_FAILURE);
+    }
+
+    if (params.excepting && params.except_pgid == pgid) {
+      if (params.verbose)
+	fprintf(stderr, "info:tty's pgid = except pgid. dont kill.\n");
     } else {
       if (params.verbose)
 	fprintf(stderr, "invoke:kill(pid=%d(%s),signum=%d)\n",
-		-gid, params.tty_name, params.signum);
-      if (kill(-gid, params.signum) != 0) {
-	fprintf(stderr, "%s:(%d on %s) %s\n", PROGNAME, gid, params.tty_name, strerror(errno));
+		-pgid, params.tty_name, params.signum);
+
+      if (kill(-pgid, params.signum) != 0) {
+	fprintf(stderr, "%s:(%d on %s) %s\n", PROGNAME, pgid, params.tty_name, strerror(errno));
 	exit(EXIT_FAILURE);
       }
     }
     exit(EXIT_SUCCESS);
   }
 
+  /* normal kill mode */
   for (; i < argc; i++) {
     pid_t pid;
     union sigval sigval;
@@ -146,7 +155,7 @@ bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_i
   result->signum = SIGTERM;
 
   opterr = 0; /* suppress auto error */
-  while(!flag_pid_found && (opt = getopt(argc, argv, "+vws:S:i:t:h")) != -1) {
+  while(!flag_pid_found && (opt = getopt(argc, argv, "+vws:S:i:t:e:h")) != -1) {
     switch(opt) {
     case 'w':
       result->pid_is_winpid = TRUE;
@@ -170,6 +179,14 @@ bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_i
 
     case 't':
       result->tty_name = strdup(optarg);
+      break;
+
+    case 'e':
+      if (!string_to_integer(optarg, &result->except_pgid)) {
+	fprintf(stderr, "%s: Invalid excepting pgid: %s\n", PROGNAME, optarg);
+	return FALSE;
+      }
+      result->excepting = TRUE;
       break;
 
     case 'v':
@@ -206,14 +223,17 @@ bool_t parse_argv(int argc, char*argv[], struct parsed_argv *result, int *next_i
 
 void usage()
 {
-  fprintf(stderr, "usage: %s [-wv] [-s sigcode] [-i sigval] {pid [pids...] | -t <tty>}\n\n"
+  fprintf(stderr, "usage: %s [-wv] [-s sigcode] [-i sigval] pid [pids...]\n"
+                  "       %s -t <tty-path> [-e pgid]\n\n"
 	  "Send signal by sigqueue(3).\n\n"
 	  " -w          pid is windows pid\n"
 	  " -v          verbose output\n"
 	  " -s sigcode  send signal with sigcode (default: SIGTERM)\n"
 	  " -i sigval   send signal with sigval\n"
-	  " -t tty_name send signal to tty_name's foreground process group\n"
+	  " -t tty-path send signal to tty_name's foreground process group\n"
+	  " -e pgid     don't send signal when tty's foreground pgid is this pgid\n"
 	  " -h          show this help\n\n",
+	  PROGNAME,
 	  PROGNAME);
 }
 
