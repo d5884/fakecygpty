@@ -101,9 +101,17 @@ int main(int argc, char *argv[])
       fprintf(stderr, "%s: Invalid pid - %s\n", PROGNAME, argv[i]);
       continue;
     }
-    if (params.pid_is_winpid && (pid = cygwin_winpid_to_pid(pid)) < 0) {
-      fprintf(stderr, "%s: Not a cygwin process - %s\n", PROGNAME, argv[i]);
-      continue;
+    if (params.pid_is_winpid) {
+      pid_t cyg_pid = cygwin_winpid_to_pid(abs(pid));
+      if (cyg_pid < 0) {
+	fprintf(stderr, "%s: Not a cygwin process's pid - %s\n", PROGNAME, argv[i]);
+	continue;
+      }
+
+      pid = pid < 0 ? -cyg_pid : cyg_pid;
+
+      if (params.verbose)
+	fprintf(stderr, "convert:win_pid=%s => cyg_pid=%d\n", argv[i], pid);
     }
 
     if (params.use_sigqueue) {
