@@ -1,8 +1,9 @@
-;;; fakecygpty.el --- Execute cygwin pty commands using pipe.
+;;; fakecygpty.el --- Support for using cygwin pty with NTEmacs.
 
 ;; Copyright (C) 2014  Daisuke Kobayashi
 
 ;; Author: Daisuke Kobayashi <d5884jp@gmail.com>
+;; Version: 0.1
 ;; Keywords: processes
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -20,7 +21,20 @@
 
 ;;; Commentary:
 
-;; 
+;; This package supplies cygwin's pty feature for NTEmacs.
+;; If you want to use the command requires pty such as `bash', try this.
+
+;;; Install:
+
+;; 1. Compile `fakecygpty.exe' and `qkill.exe', and copy them into somewhere on `exec-path'.
+;; 2. Copy this .el into somewhere on `load-path'.
+
+;;; Usage:
+
+;; Put below into your init.el:
+
+;;   (require 'fakecygpty)
+;;   (fakecygpty-activate)
 
 ;;; Code:
 
@@ -54,6 +68,7 @@
 (defconst fakecygpty--advice-regexp "^fakecygpty--"
   "Regexp for advice name of fakecygpty package.")
 
+;;;###autoload
 (defun fakecygpty-activate ()
   "Activate fakecygpty features."
   (interactive)
@@ -71,6 +86,7 @@
     (ad-activate-regexp fakecygpty--advice-regexp)
     (setq fakecygpty--activated t)))
 
+;;;###autoload
 (defun fakecygpty-deactivate ()
   "Deactivate fakecygpty features."
   (interactive)
