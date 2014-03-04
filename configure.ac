@@ -3,6 +3,7 @@
 
 AC_PREREQ([2.69])
 AC_INIT([fakecygpty], [1.1.0], [d5884jp@gmail.com])
+AC_CONFIG_AUX_DIR([build-aux])
 AM_INIT_AUTOMAKE([-Wall foreign])
 AC_CONFIG_SRCDIR([fakecygpty.c])
 AC_CONFIG_HEADERS([config.h])
@@ -22,7 +23,7 @@ AC_TYPE_SSIZE_T
 
 # Checks for library functions.
 AC_FUNC_FORK
-AC_CHECK_FUNCS([dup2 select strdup strerror strrchr strstr strtol])
+AC_CHECK_FUNCS([dup2 memchr memset select strdup strerror strrchr strstr strtol])
 
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT

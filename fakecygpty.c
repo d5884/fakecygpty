@@ -70,20 +70,32 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/ioctl.h>
+#include <pty.h>
 
-#define BUFSIZE		 1024	/* size of communication buffer */
+#define BUFSIZE		 4096	/* size of communication buffer */
 #define COMMAND_PREFIX	 "f_"
 #define MY_NAME "fakecygpty"
 
-/* global variables */
-int child_pid;		/* pid of child proces  */
-int masterfd;		/* fd of pty served to child process */
+/* prototypes */
+int open_master_pty(void);
 
-volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
-volatile sig_atomic_t sig_window_size = -1;     /* window size info */
+pid_t exec_target(int pty_master_fd, char* argv[]);
 
+void setup_tty_attributes(int tty_fd);
+void set_tty_echo_on(int tty_fd);
+int resize_tty_window(int tty_fd, int window_size_info);
+
+char *real_command_name(char* my_name);
+
+ssize_t safe_read(int fd, void *buf, size_t count);
+ssize_t safe_write_full(int fd, void *buf, size_t count);
+ssize_t safe_write_full_checking_eof(int fd, void *buf, size_t length);
+
+void setup_signal_handlers();
 void signal_pass_handler(int signum, siginfo_t *info, void *unused);
 void sigwinch_handler(int signum, siginfo_t *info, void *unused);
+
+BOOL WINAPI ctrl_handler(DWORD e);
 
 /* signal trapping descriptor */
 struct sigtrap_desc {
@@ -91,153 +103,288 @@ struct sigtrap_desc {
   void  (*action)(int, siginfo_t *, void *);
 };
 
-/* signals requiring to trap */
-struct sigtrap_desc sigtrap_descs[] =
-  {
-    { SIGHUP,   signal_pass_handler },
-    { SIGINT,   signal_pass_handler },
-    { SIGQUIT,  signal_pass_handler },
-    { SIGALRM,  signal_pass_handler },
-    { SIGTERM,  signal_pass_handler },
-    { SIGWINCH, sigwinch_handler    },
-    { SIGUSR1,  signal_pass_handler },
-    { SIGUSR2,  signal_pass_handler }
-  };
+/* global variables */
+int child_pid = -1;	/* pid of child proces  */
+int masterfd = -1;	/* fd of pty served to child process */
+
+
+volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
+volatile sig_atomic_t sig_window_size = -1;     /* window size info */
+
+/* signals trap required */
+struct sigtrap_desc sigtrap_descs[] = {
+  { SIGHUP,   signal_pass_handler },
+  { SIGINT,   signal_pass_handler },
+  { SIGQUIT,  signal_pass_handler },
+  { SIGALRM,  signal_pass_handler },
+  { SIGTERM,  signal_pass_handler },
+  { SIGWINCH, sigwinch_handler    },
+  { SIGUSR1,  signal_pass_handler },
+  { SIGUSR2,  signal_pass_handler },
+  { SIGTSTP,  signal_pass_handler },
+  { SIGCONT,  signal_pass_handler }
+};
 
 #define SIGTRAP_COUNT (sizeof(sigtrap_descs)/sizeof(struct sigtrap_desc))
 
-/* Create pty and fork/exec target process */
-/* This function sets child_pid and masterfd */
-void
-exec_target(char* argv[])
+/* codes */
+
+int main(int argc, char* argv[])
+{
+  fd_set sel, sel0;
+  int status;
+  int pty_hold_mode = FALSE;
+  char* newarg0;
+
+  /* SIGINT and SIGBREAK are indistinctive under cygwin environment. */
+  /* Using Win32API to handle SIGINT.                               */
+  SetConsoleCtrlHandler(ctrl_handler, TRUE);
+
+  if (argc < 1) {
+    fputs("Unable to get arg[0].", stderr);
+    exit(EXIT_FAILURE);
+  }
+
+  newarg0 = real_command_name(argv[0]);
+
+  if (newarg0)
+    argv[0] = newarg0;
+  else if (argc >=2)
+    argv++;
+  else
+    pty_hold_mode = TRUE;
+
+  if (isatty(STDIN_FILENO) && !pty_hold_mode) {
+    execvp(argv[0], argv);
+    fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  masterfd = open_master_pty();
+
+  if (!pty_hold_mode)
+    child_pid = exec_target(masterfd, argv);
+  else
+    set_tty_echo_on(masterfd);
+
+  setup_signal_handlers();
+
+  FD_ZERO(&sel0);
+  FD_SET(masterfd, &sel0);
+  FD_SET(STDIN_FILENO, &sel0);
+
+  /* communication loop */
+  while (1) {
+    char buf[BUFSIZE];
+    int ret;
+
+    if (sig_winch_caught == TRUE) {
+      sig_winch_caught = FALSE;
+      if (child_pid != -1 && resize_tty_window(masterfd, sig_window_size) == 0)
+	kill(child_pid, SIGWINCH);
+    }
+
+    sel = sel0;
+    if (select (FD_SETSIZE, &sel, NULL, NULL, NULL) <= 0) {
+      if(errno == EINTR)
+	continue;
+      else
+	break;
+    }
+
+    if (FD_ISSET(masterfd, &sel)) {
+      ret = safe_read(masterfd, buf, BUFSIZE);
+      if (ret > 0) {
+	if (safe_write_full(STDOUT_FILENO, buf, ret) < 0)
+	  break;
+      }
+      else
+	break;
+    }
+    else if (FD_ISSET(STDIN_FILENO, &sel)) {
+      ret = safe_read(STDIN_FILENO, buf, BUFSIZE);
+      if (ret > 0) {
+	if (safe_write_full_checking_eof(masterfd, buf, ret) < 0)
+	  break;
+      } else {
+	FD_CLR(STDIN_FILENO, &sel0);
+	close(masterfd);
+      }
+    }
+  }
+
+  if (pty_hold_mode) {
+    status = 0;
+  } else {
+    while(waitpid(child_pid, &status, 0) < 0 && errno == EINTR)
+      ;
+
+    if (WIFEXITED(status))
+      status = WEXITSTATUS(status);
+    else if(WIFSIGNALED(status)) /* ntemacs cannot distinct killed by signal */
+      status = 0x80 +  WTERMSIG(status);
+  }
+
+  return status;
+}
+
+int open_master_pty(void)
 {
   int fd;
-  int pid;
 
-  masterfd = open("/dev/ptmx", O_RDWR);
-  if (masterfd < 0)
-    {
-      perror("Cannot open pseudo tty");
-      exit (1);
-    }
+  fd = open("/dev/ptmx", O_RDWR);
+  if (fd < 0) {
+    perror("Failed to open /dev/ptmx");
+    return fd;
+  }
+
+  /* set control tty */
+  if (ioctl(fd, TIOCSCTTY, 1) != 0 )
+    perror("Failed to set control tty");
+
+  setup_tty_attributes(fd);
+
+  return fd;
+}
+
+/* Create pty and fork/exec target process */
+pid_t exec_target(int pty_master_fd, char* argv[])
+{
+  pid_t pid;
+  struct sigaction newsig;
+
+  /* don't stop by background I/O */
+  memset(&newsig, 0, sizeof(newsig));
+  newsig.sa_handler = SIG_IGN;
+  sigemptyset(&newsig.sa_mask);
+  if (sigaction(SIGTTOU, &newsig, NULL) < 0)
+    fprintf(stderr, "Failed to ignore signal SIGTTOU: %s\n", strerror(errno));
+  if (sigaction(SIGTTIN, &newsig, NULL) < 0)
+    fprintf(stderr, "Failed to ignore signal SIGTTIN: %s\n", strerror(errno));
 
   pid = fork();
-  if (pid < 0)
-    {
-      perror("Failed to fork");
-      return;
+
+  if (pid < 0) {
+    perror("Failed to fork");
+    exit(EXIT_FAILURE);
+  }
+
+  if (pid == 0) {
+    int slave;
+    int i;
+
+    slave = open(ptsname(pty_master_fd), O_RDWR);
+    close(pty_master_fd);
+
+    if (slave < 0) {
+      perror("Failed to open slave pty");
+      exit(EXIT_FAILURE);
     }
 
-  if (pid == 0)
-    {
-      int slave;
-
-      setsid();
-
-      slave = open(ptsname (masterfd), O_RDWR);
-
-      if (slave < 0)
-	{
-	  perror ("Failed to open slave fd");
-	  exit (1);
-	}
-
-    for (fd = 0 ; fd < 3 ; fd++)
-      {
-	if (slave != fd)
-	  {
-	    if (dup2(slave, fd) < 0)
-	      {
-		perror("Failed to dup2");
-		exit(1);
-	      }
-	  }
-	fcntl(fd, F_SETFD, 0);
+    for (i = 0; i < 3; i++) {
+      if (slave != i) {
+	dup2(slave, i);
+	fcntl(i, F_SETFD, 0);
       }
+    }
+    if (slave > 2)
+      close(slave);
 
-    if (slave > 2) close(slave);
+    /* make new process group and make it foreground */
+    if (setpgid(0, 0) < 0)
+      perror("Failed to setpgid");
+    if (tcsetpgrp(0, getpgid(getpid())) < 0)
+      perror("Failed to change foreground pgid");
 
     execvp(argv[0], argv);
 
     fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
-    exit(1);
+    exit(EXIT_FAILURE);
   }
 
-  child_pid = pid;
-
-  return;
+  return pid;
 }
 
-void
-setup_tty_attributes (void)
+void setup_tty_attributes (int tty_fd)
 {
   struct termios tm;
 
-  if (tcgetattr(masterfd, &tm) == 0)
-    {
-      /* setup values from child_setup_tty() in emacs/src/sysdep.c */
-      tm.c_iflag &= ~(IUCLC | ISTRIP);
-      tm.c_iflag |= IGNCR;
-      tm.c_oflag &= ~(ONLCR | OLCUC | TAB3);
-      tm.c_oflag |= OPOST;
-      tm.c_lflag &= ~ECHO;
-      tm.c_lflag |= ISIG | ICANON;
-      tm.c_cc[VERASE] = _POSIX_VDISABLE;
-      tm.c_cc[VKILL] = _POSIX_VDISABLE;
-      tm.c_cc[VEOF] = 'D'&037;
-      tcsetattr(masterfd, TCSANOW, &tm);
-    }
+  /* set up tty attribute */
+  if (tcgetattr(tty_fd, &tm) < 0)
+    perror("Faild to tcgetattr");
+  else {
+    /* setup values from child_setup_tty() in emacs/src/sysdep.c */
+    tm.c_iflag &= ~(IUCLC | ISTRIP);
+    tm.c_iflag |= IGNCR;
+    tm.c_oflag &= ~(ONLCR | OLCUC | TAB3);
+    tm.c_oflag |= OPOST;
+    tm.c_lflag &= ~ECHO;
+    tm.c_lflag |= ISIG | ICANON;
+    tm.c_cc[VERASE] = _POSIX_VDISABLE;
+    tm.c_cc[VKILL] = _POSIX_VDISABLE;
+    tm.c_cc[VEOF] = CTRL('D');
+
+    if (tcsetattr(tty_fd, TCSANOW, &tm) < 0)
+      perror("Failed to tcsetattr");
+  }
 }
 
-char *
-real_command_name(char* my_name)
+void set_tty_echo_on(int tty_fd)
+{
+  struct termios tm;
+
+  /* set up tty attribute */
+  if (tcgetattr(tty_fd, &tm) < 0)
+    perror("Faild to tcgetattr");
+  else {
+    tm.c_lflag |= ECHO;
+    if (tcsetattr(tty_fd, TCSANOW, &tm) < 0)
+      perror("Failed to tcsetattr");
+  }
+}
+
+
+int resize_tty_window(int fd, int window_size_info)
+{
+  struct winsize w;
+  int ret;
+
+  if (window_size_info >= 0) {
+    /* size info: high-16bit => rows, low-16bit => cols */
+    w.ws_row = window_size_info >> 16;
+    w.ws_col = window_size_info & 0xFFFF;
+
+    do {
+      ret = ioctl(fd, TIOCSWINSZ, &w);
+    } while (ret < 0 && errno == EINTR);
+  }
+
+  return ret;
+}
+
+char *real_command_name(char* my_name)
 {
   char *p;
 
   /* Assume mutlbyte characters do not occur here */
   p = strrchr(my_name, '/');
   if (p == NULL)
-    {
-      p = strrchr(my_name, '\\');
+    p = strrchr(my_name, '\\');
 
-      if (p == NULL)
-	p = my_name;
-      else
-	p++;
-    }
+  if (p == NULL)
+    p = my_name;
   else
     p++;
 
   if (strcmp(p, MY_NAME) == 0)
-    {
-      return NULL;    /* I am invoked as explicit wrapper program */
-    }
+    return NULL;    /* I am invoked as explicit wrapper program */
 
-  if (strncmp(p, COMMAND_PREFIX, strlen (COMMAND_PREFIX)) != 0)
-    {
-      fprintf(stderr, "Illegal program name format. \"%s\"\n", my_name);
-      exit(1);
-    }
+  if (strncmp(p, COMMAND_PREFIX, strlen (COMMAND_PREFIX)) != 0) {
+    fprintf(stderr, "Illegal program name format. \"%s\"\n", my_name);
+    exit(1);
+  }
 
   return p + strlen(COMMAND_PREFIX);
-}
-
-/* Signal handler for convert SIGINT into ^C on pty */
-/* This seems not able to be done within cygwin POSIX framework */
-BOOL WINAPI
-ctrl_handler(DWORD e)
-{
-  switch (e)
-    {
-    case CTRL_C_EVENT:
-      write(masterfd, "\003", 1);
-      return TRUE;
-
-    case CTRL_CLOSE_EVENT:
-      kill(child_pid, SIGKILL);
-      return FALSE;
-    }
-  return FALSE;
 }
 
 ssize_t safe_read(int fd, void *buf, size_t count)
@@ -251,181 +398,135 @@ ssize_t safe_read(int fd, void *buf, size_t count)
   return ret;
 }
 
-ssize_t safe_write(int fd, void *buf, size_t count)
+ssize_t safe_write_full(int fd, void *buf, size_t count)
 {
   ssize_t ret;
 
   do {
     ret = write(fd, buf, count);
-    if (ret > 0) 
-      {
-	buf += ret;
-	count -= ret;
-      }
-  } while(ret < 0 && errno == EINTR);
+    if (ret > 0) {
+      buf += ret;
+      count -= ret;
+    }
+  } while(count > 0 || (ret < 0 && errno == EINTR));
 
   return ret;
 }
 
-void sigwinch_handler(int signum, siginfo_t *info, void *unused)
+/*
+ * Workaround for cygwin's 'behavior of EOF detection.
+ * On a linux system, write("\n[EOF]somthing") cause EOF, but cygwin is not.
+ * so need to recognize indivisually before and after EOF.
+ */
+ssize_t safe_write_full_checking_eof(int fd, void *buf, size_t length)
 {
-  sig_winch_caught = TRUE;
-  if (info->si_code == SI_QUEUE) 
-    sig_window_size = info->si_value.sival_int;
-  else
-    sig_window_size = -1;
-}
+  struct termios tm;
+  char eof_char;
+  size_t rest;
+  ssize_t ret;
+  void *next_eof;
 
-void signal_pass_handler(int signum, siginfo_t *info, void *unused)
-{
-  union sigval sigval;
-  int saved_errno;
-  
-  saved_errno = errno;
-  if (info->si_code == SI_QUEUE) 
-    {
-      sigval = info->si_value;
-      sigqueue(child_pid, signum, sigval);
-      
-    }
+  /* retrieve EOF char on this pty */
+  if (tcgetattr(fd, &tm) == 0)
+    eof_char = tm.c_cc[VEOF];
   else
-    {
-      kill(child_pid, signum);
-    }
-  errno = saved_errno;
+    eof_char = _POSIX_VDISABLE;
+
+  if (eof_char == _POSIX_VDISABLE)
+    return safe_write_full(fd, buf, length);
+
+  rest = length;
+
+  while (rest > 0 && (next_eof = memchr(buf, eof_char, rest)) != NULL) {
+    ret = safe_write_full(fd, buf, next_eof - buf);
+    if (ret < 0) return ret;
+
+    /* workaround for flushing input buffer.. */
+    /* It seems continuous write(2) calls are combined, so insert sleep. */
+    usleep(1);
+    ret = safe_write_full(fd, &eof_char, 1);
+    if (ret < 0) return ret;
+
+    /* workaround for flushing input buffer.. */
+    usleep(1);
+    rest = rest - (next_eof - buf + 1);
+    buf = next_eof + 1;
+  }
+
+  if (rest > 0) {
+    ret = safe_write_full(fd, buf, rest);
+    if (ret < 0) return ret;
+  }
+
+  return length;
 }
 
 void setup_signal_handlers()
 {
   struct sigaction newsig;
   int i;
-  
+
+  memset(&newsig, 0, sizeof(newsig));
   newsig.sa_flags = SA_SIGINFO;
   sigemptyset(&newsig.sa_mask);
 
-  for (i = 0; i < SIGTRAP_COUNT; i++)
-    {
-      newsig.sa_sigaction = sigtrap_descs[i].action;
-      if (sigaction(sigtrap_descs[i].signum, &newsig, NULL) < 0)
-	fprintf(stderr, "Failed to sigaction on %d: %s\n", 
-		sigtrap_descs[i].signum, strerror(errno));
-    }
+  for (i = 0; i < SIGTRAP_COUNT; i++) {
+    newsig.sa_sigaction = sigtrap_descs[i].action;
+    if (sigaction(sigtrap_descs[i].signum, &newsig, NULL) < 0)
+      fprintf(stderr, "Failed to sigaction on %d: %s\n",
+	      sigtrap_descs[i].signum, strerror(errno));
+  }
 }
 
-void resize_window(int window_size_info)
+/* pass signals to child */
+void signal_pass_handler(int signum, siginfo_t *info, void *unused)
 {
-  struct winsize w;
-  int ret;
+  union sigval sigval;
+  int saved_errno;
 
-  if (window_size_info >= 0) 
-    {
-      /* size info: high-16bit => rows, low-16bit => cols */
-      w.ws_row = window_size_info >> 16;
-      w.ws_col = window_size_info & 0xFFFF;
+  if (child_pid == -1)
+    return;
 
-      do {
-	ret = ioctl(masterfd, TIOCSWINSZ, &w);
-      } while (ret < 0 && errno == EINTR);
-
-      if (ret == 0)
-	kill(child_pid, SIGWINCH);
-    }
-}
-
-int
-main(int argc, char* argv[])
-{
-  fd_set sel, sel0;
-  int status;
-  char* newarg0;
-
-  /* SIGINT and SIGBREAK are indistinctive under cygwin environment. */
-  /* Using Win32API to handle SIGINT.                              */
-  SetConsoleCtrlHandler(ctrl_handler, TRUE);
-
-  if (argc < 1)
-    {
-      fputs("Unable to get arg[0].", stderr);
-      exit(1);
-    }
-
-  newarg0 = real_command_name(argv[0]);
-
-  if (newarg0)
-    argv[0] = newarg0;
-  else if (argc >=2)
-    argv++;
-  else
-    {
-      fputs("usage: fakecygpty <command> [args...]", stderr);
-      exit(1);
-    }
-
-  if (isatty(0))
-    {
-      execvp(argv[0], argv);
-      fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
-      exit(1);
-    }
-  
-  exec_target(argv); /* This sets globals masterfd, child_pid */
-
-  setup_tty_attributes();
-  setup_signal_handlers();
-
-  FD_ZERO(&sel0);
-  FD_SET(masterfd, &sel0);
-  FD_SET(0, &sel0);
-
-  /* communication loop */
-  while (1)
-    {
-      char buf[BUFSIZE];
-      int ret;
-
-      if (sig_winch_caught == TRUE)
-	{
-	  sig_winch_caught = FALSE;
-	  resize_window(sig_window_size);
-	}
-
-      sel = sel0;
-      if (select (FD_SETSIZE, &sel, NULL, NULL, NULL) <= 0) 
-	{
-	  if(errno == EINTR)
-	    continue;
-	  else
-	    break;
-	}
+  saved_errno = errno;
+  if (info->si_code == SI_QUEUE) {
+    sigval = info->si_value;
+    sigqueue(child_pid, signum, sigval);
       
-      if (FD_ISSET(masterfd, &sel))
-	{
-	  ret = safe_read(masterfd, buf, BUFSIZE);
-	  if (ret > 0)
-	    safe_write(1, buf, ret);
-	  else
-	    break;
-	}
-      else if (FD_ISSET(0, &sel))
-	{
-	  ret = safe_read(0, buf, BUFSIZE);
-	  if (ret > 0)
-	    safe_write(masterfd, buf, ret);
-	  else
-	    {
-	      FD_CLR(0, &sel0);
-	      close(masterfd);
-	    }
-	}
-    }
+  } else {
+    kill(child_pid, signum);
+  }
+  errno = saved_errno;
+}
 
-  while(waitpid(child_pid, &status, 0) < 0 && errno == EINTR)
-    ;
-  
-  if (WIFEXITED(status))
-    return WEXITSTATUS(status);
-  else if(WIFSIGNALED(status)) /* ntemacs cannot distinct killed by signal */
-    return 0x80 +  WTERMSIG(status); 
-  
-  return 0;
+void sigwinch_handler(int signum, siginfo_t *info, void *unused)
+{
+  if (child_pid == -1)
+    return;
+
+  sig_winch_caught = TRUE;
+  if (info->si_code == SI_QUEUE)
+    sig_window_size = info->si_value.sival_int;
+  else
+    sig_window_size = -1;
+}
+
+/* Signal handler for convert SIGINT into ^C on pty */
+/* This seems not able to be done within cygwin POSIX framework */
+BOOL WINAPI ctrl_handler(DWORD e)
+{
+  switch (e) {
+  case CTRL_C_EVENT:
+    if (masterfd != -1) {
+      write(masterfd, "\003", 1);
+      return TRUE;
+    }
+    break;
+
+  case CTRL_CLOSE_EVENT:
+    if (child_pid != -1) {
+      kill(child_pid, SIGKILL);
+      return FALSE;
+    }
+  }
+  return FALSE;
 }
