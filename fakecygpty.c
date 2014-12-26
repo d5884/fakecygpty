@@ -408,7 +408,7 @@ ssize_t safe_write_full(int fd, void *buf, size_t count)
       buf += ret;
       count -= ret;
     }
-  } while(count > 0 || (ret < 0 && errno == EINTR));
+  } while(count > 0 && (ret >= 0 || (ret < 0 && errno == EINTR)));
 
   return ret;
 }
