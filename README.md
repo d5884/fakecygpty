@@ -10,6 +10,14 @@ If you want to use the command requires pty such as `bash`, try this.
 * I/O buffer on `gdb-mode` will be run correctly than native one.
 * `signal-process' can send arbitrary signals, except it was called interactively.
 
+An original version of `fakecygpty` was written by Kyotaro Horiguchi for Meadow project in 2005.
+In this package, improved following points:
+
+* Fix a TTY initialization parameters to fit current version of Emacs.
+* Fix to sub-process returns the correct return value. 
+* Support pty allocation mode. (for `gdb-many-windows`)
+* Support window resizing.
+
 Installation
 ------------
 
@@ -36,7 +44,9 @@ If you want to apply to all, put below into your `init.el`:
     (require 'fakecygpty)
     (fakecygpty-activate)
 
-And if you want to disable `fakecygpty` temporary, type `M-x disable-fakecygpty`.
+If you want to use new features (terminal window resizing and pty allocation mode),
+it's necessary to use this elisp file.
+And if you want to disable `fakecygpty` temporary, type `M-x fakecygpty-deactivate`.
 
 Customizing
 -----------
