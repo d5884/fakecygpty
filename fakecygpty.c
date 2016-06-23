@@ -35,7 +35,7 @@
 /*
  * COMPILATION
  * -------
- * gcc -o fakecygpty.exe fakecygpty.c
+ * gcc -D_GNU_SOURCE -o fakecygpty.exe fakecygpty.c
  * Note: You must compile it in Cygwin environment. NOT in MinGW32!
  *
  */
