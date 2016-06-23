@@ -23,7 +23,7 @@ Installation
 
 Compile `fakecygpty.c` and `qkill.c` on cygwin enviroment:
 
-    gcc -o fakecygpty fakecygpty.c
+    gcc -D_GNU_SOURCE -o fakecygpty fakecygpty.c
     gcc -o qkill qkill.c
 
 And copy *.exe into somewhere on you $PATH.
