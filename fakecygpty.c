@@ -79,7 +79,7 @@
 /* prototypes */
 int open_master_pty(void);
 
-pid_t exec_target(int pty_master_fd, char* argv[], int pty_hold_mode_flag);
+pid_t exec_target(int master_fd, char* argv[], int pty_alloc_only);
 
 void setup_tty_attributes(int tty_fd);
 void set_tty_echo_on(int tty_fd);
@@ -105,7 +105,7 @@ struct sigtrap_desc {
 
 /* global variables */
 int child_pid = -1;	/* pid of child proces  */
-int masterfd = -1;	/* fd of pty served to child process */
+int master_fd = -1;	/* fd of pty served to child process */
 
 
 volatile sig_atomic_t sig_winch_caught = FALSE; /* flag for SIGWINCH caught */
@@ -133,7 +133,7 @@ int main(int argc, char* argv[])
 {
   fd_set sel, sel0;
   int status;
-  int pty_hold_mode = FALSE;
+  int pty_alloc_only = FALSE;
   char* newarg0;
 
   /* SIGINT and SIGBREAK are indistinctive under cygwin environment. */
@@ -152,22 +152,22 @@ int main(int argc, char* argv[])
   else if (argc >=2)
     argv++;
   else
-    pty_hold_mode = TRUE;
+    pty_alloc_only = TRUE;
 
-  if (isatty(STDIN_FILENO) && !pty_hold_mode) {
+  if (isatty(STDIN_FILENO) && !pty_alloc_only) {
     execvp(argv[0], argv);
     fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
     exit(EXIT_FAILURE);
   }
 
-  masterfd = open_master_pty();
+  master_fd = open_master_pty();
 
-  child_pid = exec_target(masterfd, argv, pty_hold_mode);
+  child_pid = exec_target(master_fd, argv, pty_alloc_only);
 
   setup_signal_handlers();
 
   FD_ZERO(&sel0);
-  FD_SET(masterfd, &sel0);
+  FD_SET(master_fd, &sel0);
   FD_SET(STDIN_FILENO, &sel0);
 
   /* communication loop */
@@ -177,7 +177,7 @@ int main(int argc, char* argv[])
 
     if (sig_winch_caught == TRUE) {
       sig_winch_caught = FALSE;
-      if (child_pid != -1 && resize_tty_window(masterfd, sig_window_size) == 0)
+      if (child_pid != -1 && resize_tty_window(master_fd, sig_window_size) == 0)
 	kill(child_pid, SIGWINCH);
     }
 
@@ -189,8 +189,8 @@ int main(int argc, char* argv[])
 	break;
     }
 
-    if (FD_ISSET(masterfd, &sel)) {
-      ret = safe_read(masterfd, buf, BUFSIZE);
+    if (FD_ISSET(master_fd, &sel)) {
+      ret = safe_read(master_fd, buf, BUFSIZE);
       if (ret > 0) {
 	if (safe_write_full(STDOUT_FILENO, buf, ret) < 0)
 	  break;
@@ -201,16 +201,16 @@ int main(int argc, char* argv[])
     else if (FD_ISSET(STDIN_FILENO, &sel)) {
       ret = safe_read(STDIN_FILENO, buf, BUFSIZE);
       if (ret > 0) {
-	if (safe_write_full_checking_eof(masterfd, buf, ret) < 0)
+	if (safe_write_full_checking_eof(master_fd, buf, ret) < 0)
 	  break;
       } else {
 	FD_CLR(STDIN_FILENO, &sel0);
-	close(masterfd);
+	close(master_fd);
       }
     }
   }
 
-  if (pty_hold_mode) {
+  if (pty_alloc_only) {
     kill(child_pid, SIGKILL);
     status = 0;
   } else {
@@ -242,7 +242,7 @@ int open_master_pty(void)
 }
 
 /* Create pty and fork/exec target process */
-pid_t exec_target(int pty_master_fd, char* argv[], int pty_hold_mode_flag)
+pid_t exec_target(int master_fd, char* argv[], int pty_alloc_only)
 {
   pid_t pid;
 
@@ -254,7 +254,7 @@ pid_t exec_target(int pty_master_fd, char* argv[], int pty_hold_mode_flag)
   }
 
   if (pid == 0) {
-    int slave;
+    int slave_fd;
     int i;
 
     /* new session for obtain ctty */
@@ -263,25 +263,25 @@ pid_t exec_target(int pty_master_fd, char* argv[], int pty_hold_mode_flag)
       exit(EXIT_FAILURE);
     }
 
-    slave = open(ptsname(pty_master_fd), O_RDWR);
-    close(pty_master_fd);
+    slave_fd = open(ptsname(master_fd), O_RDWR);
+    close(master_fd);
 
-    if (slave < 0) {
+    if (slave_fd < 0) {
       perror("Failed to open slave pty");
       exit(EXIT_FAILURE);
     }
 
-    if (pty_hold_mode_flag)
-      set_tty_echo_on(slave);
+    if (pty_alloc_only)
+      set_tty_echo_on(slave_fd);
 
     for (i = 0; i < 3; i++) {
-      if (slave != i) {
-	dup2(slave, i);
+      if (slave_fd != i) {
+	dup2(slave_fd, i);
 	fcntl(i, F_SETFD, 0);
       }
     }
-    if (slave > 2)
-      close(slave);
+    if (slave_fd > 2)
+      close(slave_fd);
 
     /* make new process group and make it foreground */
     if (setpgid(0, 0) < 0)
@@ -289,10 +289,11 @@ pid_t exec_target(int pty_master_fd, char* argv[], int pty_hold_mode_flag)
     if (tcsetpgrp(0, getpgid(getpid())) < 0)
       perror("Failed to change foreground pgid");
 
-    if (!pty_hold_mode_flag)
-      execvp(argv[0], argv);
-    else
+    if (pty_alloc_only)
+      /* do nothing. wait for kill */
       select(0, NULL, NULL, NULL, NULL);
+    else
+      execvp(argv[0], argv);
 
     fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
     exit(EXIT_FAILURE);
@@ -512,8 +513,8 @@ BOOL WINAPI ctrl_handler(DWORD e)
 {
   switch (e) {
   case CTRL_C_EVENT:
-    if (masterfd != -1) {
-      write(masterfd, "\003", 1);
+    if (master_fd != -1) {
+      write(master_fd, "\003", 1);
       return TRUE;
     }
     break;
