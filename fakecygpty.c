@@ -79,7 +79,7 @@
 /* prototypes */
 int open_master_pty(void);
 
-pid_t exec_target(int pty_master_fd, char* argv[]);
+pid_t exec_target(int pty_master_fd, char* argv[], int pty_hold_mode_flag);
 
 void setup_tty_attributes(int tty_fd);
 void set_tty_echo_on(int tty_fd);
@@ -162,10 +162,7 @@ int main(int argc, char* argv[])
 
   masterfd = open_master_pty();
 
-  if (!pty_hold_mode)
-    child_pid = exec_target(masterfd, argv);
-  else
-    set_tty_echo_on(masterfd);
+  child_pid = exec_target(masterfd, argv, pty_hold_mode);
 
   setup_signal_handlers();
 
@@ -214,6 +211,7 @@ int main(int argc, char* argv[])
   }
 
   if (pty_hold_mode) {
+    kill(child_pid, SIGKILL);
     status = 0;
   } else {
     while(waitpid(child_pid, &status, 0) < 0 && errno == EINTR)
@@ -238,29 +236,15 @@ int open_master_pty(void)
     return fd;
   }
 
-  /* set control tty */
-  if (ioctl(fd, TIOCSCTTY, 1) != 0 )
-    perror("Failed to set control tty");
-
   setup_tty_attributes(fd);
 
   return fd;
 }
 
 /* Create pty and fork/exec target process */
-pid_t exec_target(int pty_master_fd, char* argv[])
+pid_t exec_target(int pty_master_fd, char* argv[], int pty_hold_mode_flag)
 {
   pid_t pid;
-  struct sigaction newsig;
-
-  /* don't stop by background I/O */
-  memset(&newsig, 0, sizeof(newsig));
-  newsig.sa_handler = SIG_IGN;
-  sigemptyset(&newsig.sa_mask);
-  if (sigaction(SIGTTOU, &newsig, NULL) < 0)
-    fprintf(stderr, "Failed to ignore signal SIGTTOU: %s\n", strerror(errno));
-  if (sigaction(SIGTTIN, &newsig, NULL) < 0)
-    fprintf(stderr, "Failed to ignore signal SIGTTIN: %s\n", strerror(errno));
 
   pid = fork();
 
@@ -273,6 +257,12 @@ pid_t exec_target(int pty_master_fd, char* argv[])
     int slave;
     int i;
 
+    /* new session for obtain ctty */
+    if (setsid() < 0) {
+      perror("Failed to setsid");
+      exit(EXIT_FAILURE);
+    }
+
     slave = open(ptsname(pty_master_fd), O_RDWR);
     close(pty_master_fd);
 
@@ -280,6 +270,9 @@ pid_t exec_target(int pty_master_fd, char* argv[])
       perror("Failed to open slave pty");
       exit(EXIT_FAILURE);
     }
+
+    if (pty_hold_mode_flag)
+      set_tty_echo_on(slave);
 
     for (i = 0; i < 3; i++) {
       if (slave != i) {
@@ -296,7 +289,10 @@ pid_t exec_target(int pty_master_fd, char* argv[])
     if (tcsetpgrp(0, getpgid(getpid())) < 0)
       perror("Failed to change foreground pgid");
 
-    execvp(argv[0], argv);
+    if (!pty_hold_mode_flag)
+      execvp(argv[0], argv);
+    else
+      select(0, NULL, NULL, NULL, NULL);
 
     fprintf(stderr, "Failed to execute \"%s\": %s\n", argv[0], strerror(errno));
     exit(EXIT_FAILURE);

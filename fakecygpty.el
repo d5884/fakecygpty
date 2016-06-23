@@ -139,7 +139,7 @@ TTY's foreground process group pgid equals PROCESS pid."
 
 (defun fakecygpty-real-process-id (process &optional as-winpid)
   "Return subprocess's process-id if PROCESS was invoked by fakecygpty."
-  (if (eq (fakecygpty-process-p process) t) ;; not pty only mode
+  (if (fakecygpty-process-p process)
       (with-temp-buffer
 	(when (zerop
 	       (call-process
@@ -233,7 +233,7 @@ nil means current buffer's process."
 	      ;; Finding fakecygpty's tty-name.
 	      (if (zerop (call-process
 			  "cat" nil (current-buffer) nil
-			  (format "/proc/%s/ctty" (process-id (ad-get-arg 0)))))
+			  (format "/proc/%s/ctty" (fakecygpty-real-process-id (ad-get-arg 0)))))
 		  (replace-regexp-in-string "\r?\n" "" (buffer-string))
 		"?")))))
 
