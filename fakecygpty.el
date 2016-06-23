@@ -1,6 +1,6 @@
 ;;; fakecygpty.el --- Support for using cygwin pty with NTEmacs.
 
-;; Copyright (C) 2014  Daisuke Kobayashi
+;; Copyright (C) 2014, 2016  Daisuke Kobayashi
 
 ;; Author: Daisuke Kobayashi <d5884jp@gmail.com>
 ;; Version: 0.1
